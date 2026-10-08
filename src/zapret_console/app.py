@@ -18,7 +18,7 @@ ROOT = Path('/opt/zapret-discord-youtube-linux')
 STATE = Path('/var/lib/zapret-console')
 UNIT = 'zapret_discord_youtube.service'
 KNOWN = STATE / 'known-good.json'
-VERSION = '0.1.0'
+VERSION = '0.2.0'
 SETTINGS = Path('/etc/zapret-console/settings.json')
 LAUNCHER = '/usr/local/bin/zapret-console'
 FIELDS = ('interface', 'gamefiltertcp', 'gamefilterudp', 'strategy', 'firewall_backend')
@@ -152,6 +152,10 @@ def apply_config(new):
 def admin(action, value=None):
     if os.geteuid() != 0:
         raise RuntimeError('Для системного изменения требуются права администратора')
+    if action == 'runtime':
+        from .diagnostics import runtime_snapshot
+        print(json.dumps(runtime_snapshot(UNIT)))
+        return
     trusted(ROOT)
     trusted(ROOT / 'conf.env')
     trusted(ROOT / 'nfqws')
@@ -275,16 +279,42 @@ def gateway_probe():
         s.close()
 
 
+def get_runtime():
+    from .diagnostics import runtime_snapshot
+    if os.geteuid() == 0:
+        return runtime_snapshot(UNIT)
+    if not Path(LAUNCHER).is_file():
+        return runtime_snapshot(UNIT)
+    args = ['sudo']
+    if not sys.stdin.isatty():
+        args += ['-n']
+    args += ['--', LAUNCHER, '--admin', 'runtime']
+    try:
+        r = subprocess.run(args, stdout=subprocess.PIPE,
+                           stderr=None if sys.stdin.isatty() else subprocess.DEVNULL,
+                           text=True, timeout=60)
+        if r.returncode == 0:
+            return json.loads(r.stdout)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        pass
+    return runtime_snapshot(UNIT)
+
+
 def diagnose():
+    from .diagnostics import runtime_summary
     print('\nПроверка текущего сетевого пути. Это займёт до минуты…', flush=True)
-    lines = [status(), '']
-    route = command(['ip', 'route', 'get', '162.159.137.232']).stdout.strip()
+    print('Проверка firewall и очереди может запросить пароль sudo.', flush=True)
+    before = get_runtime()
+    checks = []
+    c = config()
+    lines = [f"Стратегия: {c['strategy']} · интерфейс: {c['interface']}", '']
+    try:
+        address = socket.getaddrinfo('discord.com', 443, socket.AF_INET)[0][4][0]
+        route = command(['ip', 'route', 'get', address]).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        route = ''
     lines += ['Маршрут к Discord:', route, '']
     match = re.search(r'\bdev (\S+)', route)
-    c = config()
-    if match and c['interface'] != 'any' and match.group(1) != c['interface']:
-        lines += [f"Внимание: трафик идёт через {match.group(1)}, а zapret настроен на {c['interface']}.",
-                  'Успешная проверка этого пути не подтверждает работу zapret.', '']
     for name, url in [('Страница приложения', 'https://discord.com/app'),
                       ('API Discord', 'https://discord.com/api/v10/gateway')]:
         print(f'  {name}…', flush=True)
@@ -292,15 +322,22 @@ def diagnose():
             r = command(['curl', '--noproxy', '*', '-fSs', '--max-time', '12', '-o', '/dev/null',
                          '-w', 'HTTP %{http_code}, получено %{size_download} байт', url], timeout=15)
             lines.append(f"{name}: {'OK' if r.returncode == 0 else 'ОШИБКА'} — {r.stdout.strip()}")
+            checks.append(r.returncode == 0)
             if r.returncode:
                 lines.append(r.stderr.strip())
         except subprocess.TimeoutExpired:
+            checks.append(False)
             lines.append(f'{name}: превышено время ожидания')
     print('  WebSocket…', flush=True)
     try:
         lines.append(gateway_probe())
+        checks.append(True)
     except Exception as e:
+        checks.append(False)
         lines.append(f'WebSocket: ОШИБКА — {e}')
+    after = get_runtime()
+    lines += ['', 'Результат диагностики:', *runtime_summary(before, after, match.group(1) if match else None,
+                                                           c['interface'], len(checks) == 3 and all(checks))]
     lines += ['', 'Голос и трансляция проверяются подключением к каналу в Discord.',
               'Эта проверка не входит в голосовые каналы и не использует твой аккаунт.']
     report = '\n'.join(lines)
@@ -313,7 +350,7 @@ def main():
     parser = argparse.ArgumentParser(description='Zapret Console — управление обходом DPI в Linux')
     parser.add_argument('--version', action='version', version=f'%(prog)s {VERSION}')
     parser.add_argument('--admin', help=argparse.SUPPRESS, choices=['start', 'stop', 'restart', 'enable', 'disable',
-                                         'strategy', 'interface', 'save-good', 'restore-good', 'restore-previous'])
+                                         'strategy', 'interface', 'save-good', 'restore-good', 'restore-previous', 'runtime'])
     parser.add_argument('--value', help=argparse.SUPPRESS)
     parser.add_argument('--json', action='store_true', help='Машиночитаемый статус (с --status)')
     parser.add_argument('--status', action='store_true')
@@ -326,6 +363,9 @@ def main():
     if args.admin:
         if os.geteuid() != 0:
             raise RuntimeError('Для системного изменения требуются права администратора')
+        if args.admin == 'runtime':
+            admin('runtime')
+            return
         STATE.mkdir(parents=True, exist_ok=True)
         trusted(STATE)
         with (STATE / '.lock').open('a') as lock:

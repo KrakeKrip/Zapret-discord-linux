@@ -18,7 +18,9 @@ jobs:
       - name: Compile Python
         run: python -m compileall -q src
       - name: Check shell scripts
-        run: bash -n scripts/install.sh scripts/uninstall.sh
+        run: bash -n scripts/install.sh scripts/uninstall.sh scripts/setup.sh
+      - name: Validate fresh-install plan
+        run: bash scripts/setup.sh --dry-run --backend-root "$RUNNER_TEMP/fresh-zapret"
       - name: Test staged installation and removal
         run: |
           DESTDIR="$RUNNER_TEMP/zapret-stage" bash scripts/install.sh
