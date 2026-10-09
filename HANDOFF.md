@@ -11,7 +11,7 @@ git clone https://github.com/KrakeKrip/Zapret-discord-linux.git
 cd Zapret-discord-linux
 git status --short
 python3 -m venv .venv
-.venv/bin/python -m pip install -e '.[gui]' build
+.venv/bin/python -m pip install -e '.[gui]' build setuptools wheel
 QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software .venv/bin/python -m unittest discover -s tests -q
 ```
 

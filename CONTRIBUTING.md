@@ -6,7 +6,7 @@
 
 ```bash
 python3 -m venv .venv
-.venv/bin/python -m pip install -e '.[gui]' build
+.venv/bin/python -m pip install -e '.[gui]' build setuptools wheel
 QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software .venv/bin/python -m unittest discover -s tests -v
 .venv/bin/python -m compileall -q src scripts packaging/launcher.py
 bash -n scripts/install.sh scripts/uninstall.sh scripts/setup.sh

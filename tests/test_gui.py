@@ -4,6 +4,7 @@ PySide6-dependent tests are skipped when the gui extra is not installed;
 they must be executed in the development venv (pip install ".[gui]").
 """
 import json
+import shutil
 import os
 from pathlib import Path
 import subprocess
@@ -894,8 +895,14 @@ class PackageDataTests(unittest.TestCase):
         if probe.returncode != 0:
             self.skipTest('pip недоступен в этой среде; сборка проверяется в venv с extra gui')
         with tempfile.TemporaryDirectory() as out_dir:
+            source = Path(out_dir) / 'source'
+            source.mkdir()
+            for name in ('pyproject.toml', 'README.md', 'LICENSE'):
+                shutil.copy2(ROOT / name, source / name)
+            shutil.copytree(ROOT / 'src', source / 'src',
+                            ignore=shutil.ignore_patterns('__pycache__', '*.egg-info'))
             r = subprocess.run([sys.executable, '-m', 'pip', 'wheel', '--no-deps',
-                                '--no-build-isolation', '-w', out_dir, str(ROOT)],
+                                '--no-build-isolation', '-w', out_dir, str(source)],
                                capture_output=True, text=True, timeout=300)
             self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
             wheels = list(Path(out_dir).glob('*.whl'))
@@ -903,8 +910,7 @@ class PackageDataTests(unittest.TestCase):
             import zipfile
             with zipfile.ZipFile(wheels[0]) as wheel:
                 names = wheel.namelist()
-            for module in ('__init__.py', 'app.py', 'ui.py'):
-                self.assertIn(f'zapret_console/tui/{module}', names)
+            self.assertFalse(any('/tui/' in name for name in names), 'Removed Textual frontend must not enter the wheel')
             for resource in ('Main.qml', 'Theme.qml', 'GuiIcon.qml', 'AppButton.qml', 'qmldir'):
                 self.assertIn(f'zapret_console/gui/qml/{resource}', names)
 
