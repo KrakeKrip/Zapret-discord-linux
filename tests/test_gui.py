@@ -25,7 +25,7 @@ try:
     from PySide6.QtQuick import QQuickItem, QQuickWindow
     from PySide6.QtTest import QTest
     from PySide6.QtGui import QGuiApplication
-    from PySide6.QtQml import QQmlApplicationEngine
+    from PySide6.QtQml import QQmlApplicationEngine, QQmlExpression
     HAVE_PYSIDE = True
 except ImportError:
     HAVE_PYSIDE = False
@@ -71,6 +71,9 @@ class FakeBackend:
         self.snapshot_error = None
         self.snapshot_gate = None
         self.request_gate = None
+        self.inspection_gate = None
+        self.inspection_calls = []
+        self.inspection_error = None
 
     def snapshot(self):
         if self.snapshot_gate is not None:
@@ -83,6 +86,25 @@ class FakeBackend:
 
     def strategies(self):
         return list(self.strategy_names)
+
+    def diagnose(self, privileged=False, progress=None):
+        self.inspection_calls.append(('diagnostic', privileged, threading.get_ident()))
+        if progress:
+            progress('Проверяем сеть…')
+        if self.inspection_gate is not None:
+            self.inspection_gate.wait(timeout=15)
+        if self.inspection_error:
+            raise self.inspection_error
+        return {'report': 'Сервис: запущен\nПравила firewall: не удалось проверить\nПроверка через VPN не подтверждает zapret.',
+                'network_ok': True, 'route_interface': 'tun0', 'configured_interface': 'eth0'}
+
+    def journal(self):
+        self.inspection_calls.append(('journal', False, threading.get_ident()))
+        if self.inspection_gate is not None:
+            self.inspection_gate.wait(timeout=15)
+        if self.inspection_error:
+            raise self.inspection_error
+        return {'ok': True, 'text': '<b>literal log entry</b>\nservice started', 'warning': 'Некоторые сообщения недоступны'}
 
     def request(self, action, value=None, expected_revision=None):
         # запрос фиксируется как отправленный до блокировки на gate:
@@ -161,6 +183,56 @@ class BridgeTests(unittest.TestCase):
         self.assertTrue(wait_until(lambda: not self.bridge._snapshot_pending))
         self.assertEqual(self.bridge.eventTone, 'error')
         self.assertIn('read failure', self.bridge.lastEvent)
+
+    def test_inspection_runs_in_worker_and_prevents_duplicate_or_mutating_jobs(self):
+        gate = threading.Event()
+        self.backend.inspection_gate = gate
+        try:
+            self.bridge.runDiagnostics(False)
+            self.assertTrue(wait_until(lambda: len(self.backend.inspection_calls) == 1))
+            self.assertTrue(self.bridge.busy)
+            self.assertNotEqual(self.backend.inspection_calls[0][2], threading.get_ident())
+            self.bridge.runDiagnostics(True)
+            self.bridge.refreshJournal()
+            self.bridge.stopService()
+            self.assertEqual(len(self.backend.inspection_calls), 1)
+            self.assertEqual(self.backend.requests, [])
+        finally:
+            gate.set()
+        self.assertTrue(wait_until(lambda: not self.bridge.busy))
+        self.assertIn('VPN', self.bridge.diagnosticReport)
+        self.assertEqual(self.bridge.diagnosticTone, 'warn')
+
+    def test_close_during_inspection_waits_without_service_changes(self):
+        gate = threading.Event()
+        self.backend.inspection_gate = gate
+        try:
+            self.bridge.refreshJournal()
+            self.assertTrue(wait_until(lambda: len(self.backend.inspection_calls) == 1))
+            before = time.monotonic()
+            self.bridge.requestClose()
+            self.assertLess(time.monotonic() - before, 1)
+            self.bridge.runDiagnostics(False)
+            self.assertEqual(len(self.backend.inspection_calls), 1)
+            self.assertEqual(self.quit_calls, [])
+        finally:
+            gate.set()
+        self.assertTrue(wait_until(lambda: self.quit_calls == [1]))
+        self.assertFalse(self.bridge._worker.isRunning())
+        self.assertEqual(self.backend.requests, [])
+
+    def test_cancelled_diagnostic_auth_is_neutral_and_preserves_last_report(self):
+        from zapret_console.client import ReadOperationError
+        self.bridge.runDiagnostics(False)
+        self.assertTrue(wait_until(lambda: not self.bridge.busy))
+        previous = self.bridge.diagnosticReport
+        self.backend.inspection_error = ReadOperationError('auth_cancelled', 'Авторизация отменена')
+        self.bridge.runDiagnostics(True)
+        self.assertTrue(wait_until(lambda: not self.bridge.busy))
+        self.assertEqual(self.bridge.diagnosticReport, previous)
+        self.assertEqual(self.bridge.diagnosticTone, 'muted')
+        self.assertIn('отменена', self.bridge.diagnosticStatus)
+        self.assertEqual(self.backend.requests, [])
 
     def test_service_state_unknown_and_files_disabled_on_read_error(self):
         self.backend.snapshot_error = 'нет доступа'
@@ -535,6 +607,33 @@ class QmlWindowTests(unittest.TestCase):
         self.assertEqual(self.window.property('minimumWidth'), 800)
         self.window.setProperty('width', 1040)
         self.assertTrue(wait_until(lambda: sidebar.property('width') == 208))
+        self.assert_no_qml_warnings()
+
+    def test_inspection_pages_use_real_buttons_without_privilege_by_default(self):
+        self.click('navDiagnostics')
+        self.assertEqual(self.backend.inspection_calls, [])
+        self.assertFalse(self.prop('diagnosticElevate', 'checked'))
+        self.click('runDiagnosticsButton')
+        self.assertTrue(wait_until(lambda: not self.bridge.busy))
+        self.assertEqual(self.backend.inspection_calls[0][:2], ('diagnostic', False))
+        self.assertIn('VPN', self.prop('diagnosticReportArea', 'text'))
+        self.click('navJournal')
+        self.click('refreshJournalButton')
+        self.assertTrue(wait_until(lambda: not self.bridge.busy))
+        self.assertEqual(self.backend.inspection_calls[-1][:2], ('journal', False))
+        self.assertIn('<b>literal log entry</b>', self.prop('journalArea', 'text'))
+        value, undefined = QQmlExpression(self.engine.rootContext(), self.find('journalArea'),
+                                           'textFormat === 0').evaluate()
+        self.assertFalse(undefined)
+        self.assertTrue(value)  # PlainText, journal content cannot supply markup
+        self.click('copyJournalButton')
+        self.assertIn('literal log entry', self.app.clipboard().text())
+        self.assertIn('недоступны', self.app.clipboard().text())
+        self.assertEqual(self.backend.requests, [])
+        self.window.setProperty('width', 800)
+        self.window.setProperty('height', 560)
+        QCoreApplication.processEvents()
+        self.assertGreater(self.prop('journalArea', 'width'), 400)
         self.assert_no_qml_warnings()
 
     def visual_items(self):

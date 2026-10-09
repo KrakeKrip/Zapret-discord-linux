@@ -196,6 +196,12 @@ class RealBackend:
     def strategies(self):
         return core.strategies(core.BackendContext.from_settings())
 
+    def diagnose(self, privileged=False, progress=None):
+        return client.diagnose(mode=self.mode, privileged=privileged, progress=progress)
+
+    def journal(self):
+        return client.journal()
+
     def request(self, action, value=None, expected_revision=None):
         body = client.make_request(action, value, expected_revision)
         return client.request(body, mode=self.mode)
@@ -244,6 +250,9 @@ class BackendBridge(QObject):
     snapshotReady = Signal(int, object, object)
     readFailed = Signal(int, str)
     operationFinished = Signal(str, object)
+    inspectionFinished = Signal(str, object)
+    inspectionProgress = Signal(str)
+    inspectionChanged = Signal()
 
     def __init__(self, backend=None, quit_callback=None, parent=None):
         super().__init__(parent)
@@ -255,6 +264,16 @@ class BackendBridge(QObject):
         self.snapshotReady.connect(self._on_snapshot_ready)
         self.readFailed.connect(self._on_read_failed)
         self.operationFinished.connect(self._on_operation_finished)
+        self.inspectionFinished.connect(self._on_inspection_finished)
+        self.inspectionProgress.connect(self._on_inspection_progress)
+        self._inspection_pending = False
+        self._inspection_text = ''
+        self._diagnostic_report = ''
+        self._diagnostic_status = 'Проверка ещё не запускалась'
+        self._diagnostic_tone = 'muted'
+        self._journal_text = ''
+        self._journal_warning = ''
+        self._journal_status = 'Журнал ещё не загружен'
         self._timer = QTimer(self)
         self._timer.setInterval(REFRESH_INTERVAL_MS)
         self._timer.timeout.connect(self.refresh)
@@ -355,11 +374,11 @@ class BackendBridge(QObject):
     configError = Property(str, get_config_error, notify=revisionChanged)
 
     def get_busy(self):
-        return self._busy
+        return self._busy or self._inspection_pending
     busy = Property(bool, get_busy, notify=busyChanged)
 
     def get_busy_text(self):
-        return self._busy_text
+        return self._inspection_text if self._inspection_pending else self._busy_text
     busyText = Property(str, get_busy_text, notify=busyChanged)
 
     def get_closing(self):
@@ -381,6 +400,75 @@ class BackendBridge(QObject):
     def get_strategies_model(self):
         return self.strategies
     strategiesModel = Property(QObject, get_strategies_model, constant=True)
+
+    diagnosticReport = Property(str, lambda self: self._diagnostic_report, notify=inspectionChanged)
+    diagnosticStatus = Property(str, lambda self: self._diagnostic_status, notify=inspectionChanged)
+    diagnosticTone = Property(str, lambda self: self._diagnostic_tone, notify=inspectionChanged)
+    journalText = Property(str, lambda self: self._journal_text, notify=inspectionChanged)
+    journalWarning = Property(str, lambda self: self._journal_warning, notify=inspectionChanged)
+    journalStatus = Property(str, lambda self: self._journal_status, notify=inspectionChanged)
+
+    @Slot(bool)
+    def runDiagnostics(self, privileged=False):
+        self._start_inspection('diagnostic', privileged)
+
+    @Slot()
+    def refreshJournal(self):
+        self._start_inspection('journal')
+
+    @Slot(str)
+    def copyText(self, text):
+        from PySide6.QtGui import QGuiApplication
+        QGuiApplication.clipboard().setText(text)
+        self._set_last_event('Текст скопирован.', 'muted')
+
+    def _start_inspection(self, kind, privileged=False):
+        if self.busy or self._closing:
+            return
+        self._inspection_pending = True
+        self._inspection_text = 'Проверяем Discord…' if kind == 'diagnostic' else 'Читаем журнал…'
+        self.busyChanged.emit()
+        backend = self._backend
+        def job():
+            try:
+                data = backend.diagnose(privileged=privileged, progress=self.inspectionProgress.emit) if kind == 'diagnostic' else backend.journal()
+                self.inspectionFinished.emit(kind, {'ok': True, 'data': data})
+            except Exception as e:
+                self.inspectionFinished.emit(kind, {'ok': False, 'error': str(e), 'code': getattr(e, 'code', None)})
+        self._worker.submit(job)
+
+    def _on_inspection_progress(self, message):
+        if self._inspection_pending:
+            self._inspection_text = message
+            self.busyChanged.emit()
+
+    def _on_inspection_finished(self, kind, result):
+        self._inspection_pending = False
+        self._inspection_text = ''
+        self.busyChanged.emit()
+        if not result['ok']:
+            message = result['error']
+            if kind == 'diagnostic':
+                self._diagnostic_status = ('Проверка отменена: ' if result.get('code') == 'auth_cancelled' else 'Проверка не завершена: ') + message
+                self._diagnostic_tone = 'muted' if result.get('code') == 'auth_cancelled' else 'error'
+            else:
+                self._journal_status = 'Не удалось прочитать журнал'
+                self._journal_warning = message
+            self._set_last_event(message, 'muted' if result.get('code') == 'auth_cancelled' else 'error')
+        elif kind == 'diagnostic':
+            data = result['data']
+            self._diagnostic_report = data['report']
+            self._diagnostic_status = 'Сетевые проверки прошли' if data['network_ok'] else 'Часть сетевых проверок не прошла'
+            # Network success alone never proves zapret/VPN/voice participation.
+            self._diagnostic_tone = 'warn' if not data['network_ok'] or data['route_interface'] != data['configured_interface'] else 'muted'
+            self._set_last_event('Диагностика завершена.', self._diagnostic_tone)
+        else:
+            data = result['data']
+            self._journal_text = data['text']
+            self._journal_warning = data['warning']
+            self._journal_status = ('Журнал обновлён' if data['text'].strip() else 'Доступных записей нет') if data['ok'] else 'Не удалось прочитать журнал'
+            self._set_last_event(self._journal_status, 'warn' if data['warning'] or not data['ok'] else 'muted')
+        self.inspectionChanged.emit()
 
     # -- lifecycle --------------------------------------------------------
     def start(self):
@@ -579,7 +667,7 @@ class BackendBridge(QObject):
         self._run_operation('strategy', f'Применение стратегии {name}', 'strategy', name, revision)
 
     def _run_operation(self, kind, description, action, value, revision):
-        if self._busy or self._closing:
+        if self._busy or self._inspection_pending or self._closing:
             return False
         self._busy = True
         self._busy_text = description + '…'

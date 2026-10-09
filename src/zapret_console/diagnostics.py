@@ -3,14 +3,21 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import socket
+import ssl
+
+from . import core
 
 
 def runtime_snapshot(unit, run=subprocess.run, proc=Path('/proc'), cgroups=Path('/sys/fs/cgroup')):
     result = {'service': 'unknown', 'engine': 'unknown', 'firewall': 'unknown',
               'queue': 'unknown', 'sequence': None, 'queue_drops': None}
-    service = run(['systemctl', 'show', unit, '--property=ActiveState,ControlGroup'],
-                  capture_output=True, text=True, timeout=10)
-    props = dict(line.split('=', 1) for line in service.stdout.splitlines() if '=' in line)
+    try:
+        service = run(['systemctl', 'show', unit, '--property=ActiveState,ControlGroup'],
+                      capture_output=True, text=True, timeout=10)
+        props = dict(line.split('=', 1) for line in service.stdout.splitlines() if '=' in line)
+    except (OSError, subprocess.TimeoutExpired):
+        props = {}
     result['service'] = props.get('ActiveState', 'unknown')
     group = props.get('ControlGroup', '')
     if group.startswith('/') and '..' not in Path(group).parts:
@@ -23,7 +30,8 @@ def runtime_snapshot(unit, run=subprocess.run, proc=Path('/proc'), cgroups=Path(
                         if (proc / pid / 'comm').read_text().strip() == 'nfqws':
                             result['engine'] = 'running'
                     except OSError:
-                        pass
+                        if result['engine'] != 'running':
+                            result['engine'] = 'unknown'
         except OSError:
             pass
     try:
@@ -58,8 +66,10 @@ def runtime_snapshot(unit, run=subprocess.run, proc=Path('/proc'), cgroups=Path(
                         capture_output=True, text=True, timeout=10)
             if rules.returncode == 0 and re.search(r'-j NFQUEUE\b.*--queue-num 220\b', rules.stdout):
                 result['firewall'] = 'configured'
+            elif rules.returncode != 0 and not re.search(r'No chain|does not exist|No such', rules.stderr, re.I):
+                result['firewall'] = 'unknown'
         except (OSError, subprocess.TimeoutExpired):
-            pass
+            result['firewall'] = 'unknown'
     return result
 
 
@@ -77,7 +87,7 @@ def runtime_summary(before, after, route_interface, configured_interface, networ
     route_matches = bool(route_interface) and (configured_interface == 'any' or route_interface == configured_interface)
     if not route_interface:
         lines.append('Маршрут не определён; участие zapret в проверке не подтверждено.')
-    elif not route_matches:
+    elif not route_matches or route_interface.startswith(('tun', 'tap', 'wg', 'tailscale', 'proton', 'mullvad')):
         lines.append(f'Трафик идёт через {route_interface}, zapret настроен на {configured_interface}.')
         lines.append('Проверка этого пути не подтверждает работу zapret. Проверь подключение без VPN.')
     elif delta == 0:
@@ -90,3 +100,97 @@ def runtime_summary(before, after, route_interface, configured_interface, networ
         lines.append(f'Счётчик потерянных пакетов очереди: {drops}; это накопленное значение.')
     lines.append('Успешные сетевые проверки не подтверждают работу голоса и трансляции.')
     return lines
+
+
+def gateway_probe():
+    s = socket.create_connection(('gateway.discord.gg', 443), timeout=8)
+    try:
+        s = ssl.create_default_context().wrap_socket(s, server_hostname='gateway.discord.gg')
+        s.sendall(b'GET /?v=10&encoding=json HTTP/1.1\r\nHost: gateway.discord.gg\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n')
+        data = b''
+        while b'\r\n\r\n' not in data:
+            part = s.recv(4096)
+            if not part or len(data) > 65536:
+                raise RuntimeError('Сервер не завершил WebSocket handshake')
+            data += part
+        headers, frame = data.split(b'\r\n\r\n', 1)
+        if b' 101 ' not in headers.split(b'\r\n')[0]:
+            raise RuntimeError('Сервер не принял WebSocket')
+        while len(frame) < 2:
+            part = s.recv(4096)
+            if not part:
+                raise RuntimeError('WebSocket закрылся до получения данных')
+            frame += part
+        return 'OK — WebSocket подключился, сервер прислал данные'
+    finally:
+        s.close()
+
+
+
+def collect_diagnostics(ctx, runtime_reader=None, progress=None, command=None,
+                        gateway=None, resolve=None):
+    """Shared, read-only diagnostics. No UI, authorization, or file writes.
+
+    Callers choose whether runtime evidence may require authorization. Network
+    probes never use a Discord account; unavailable evidence stays unknown.
+    """
+    command = command or core.command
+    gateway = gateway or gateway_probe
+    resolve = resolve or socket.getaddrinfo
+    progress = progress or (lambda text: None)
+    runtime_reader = runtime_reader or (lambda: runtime_snapshot(ctx.unit))
+    progress('Читаем состояние сервиса и очереди…')
+    config = core.config(ctx)
+    before = runtime_reader()
+    checks = []
+    route, route_interface = '', None
+    try:
+        address = resolve('discord.com', 443, socket.AF_INET)[0][4][0]
+        response = command(['ip', 'route', 'get', address])
+        if response.returncode == 0:
+            route = response.stdout.strip()
+            match = re.search(r'\bdev (\S+)', route)
+            route_interface = match.group(1) if match else None
+    except (OSError, subprocess.TimeoutExpired, IndexError):
+        pass
+    for name, url in [('Страница приложения', 'https://discord.com/app'),
+                      ('API Discord', 'https://discord.com/api/v10/gateway')]:
+        progress(name + '…')
+        try:
+            r = command(['curl', '--noproxy', '*', '-fSs', '--max-time', '12', '-o', '/dev/null',
+                         '-w', 'HTTP %{http_code}, получено %{size_download} байт', url], timeout=15)
+            checks.append({'name': name, 'ok': r.returncode == 0,
+                           'detail': (r.stdout.strip() + '\n' + r.stderr.strip()).strip()})
+        except (OSError, subprocess.TimeoutExpired) as e:
+            checks.append({'name': name, 'ok': False, 'detail': str(e)})
+    progress('WebSocket…')
+    try:
+        checks.append({'name': 'WebSocket', 'ok': True, 'detail': gateway()})
+    except Exception as e:
+        checks.append({'name': 'WebSocket', 'ok': False, 'detail': str(e)})
+    progress('Сравниваем состояние очереди…')
+    after = runtime_reader()
+    network_ok = all(check['ok'] for check in checks)
+    lines = [f"Стратегия: {config['strategy']} · интерфейс: {config['interface']}",
+             '', 'Маршрут к Discord:', route or 'Не удалось определить', '']
+    for check in checks:
+        lines.append(f"{check['name']}: {'OK' if check['ok'] else 'ОШИБКА'} — {check['detail']}")
+    lines += ['', 'Результат диагностики:',
+              *runtime_summary(before, after, route_interface, config['interface'], network_ok),
+              '', 'Голос и трансляция проверяются подключением к каналу в Discord.',
+              'Эта проверка не входит в голосовые каналы и не использует твой аккаунт.']
+    return {'report': '\n'.join(lines), 'checks': checks, 'runtime': after,
+            'route_interface': route_interface, 'configured_interface': config['interface'],
+            'network_ok': network_ok}
+
+
+def journal_snapshot(ctx, command=None, lines=100):
+    """Bounded service journal, read without elevation or shell commands."""
+    if type(lines) is not int or not 1 <= lines <= 100:
+        raise ValueError("Количество строк журнала: от 1 до 100")
+    command = command or core.command
+    r = command(['journalctl', '--unit', ctx.unit, '--lines', str(lines),
+                 '--no-pager', '--output', 'short-iso'], timeout=15)
+    # Permission hints on stderr matter even when journalctl returns zero.
+    return {'text': r.stdout[-131072:], 'warning': r.stderr[:4096].strip(),
+            'ok': r.returncode == 0}

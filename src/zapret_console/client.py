@@ -136,3 +136,34 @@ def request(body, mode='terminal', timeout=REQUEST_TIMEOUT):
                       'Время ожидания истекло; результат операции неизвестен. Перечитай состояние перед новыми действиями.')
     except OSError as e:
         return _error('transport_error', f'Не удалось запустить launcher: {e}')
+
+
+class ReadOperationError(RuntimeError):
+    """Preserve helper error codes for optional read-only authorization."""
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+
+
+def diagnose(context=None, mode='terminal', privileged=False, progress=None):
+    """Read-only diagnostics shared by GUI/TUI; auth is explicitly opt-in."""
+    from . import diagnostics
+    ctx = context if context is not None else core.BackendContext.from_settings()
+    reader = None
+    if privileged:
+        def reader():
+            result = request(make_request('runtime'), mode=mode)
+            if not result['ok']:
+                raise ReadOperationError(result['code'], result['message'] or result['code'])
+            data = result['data']
+            if not isinstance(data, dict):
+                raise RuntimeError('Helper вернул некорректный снимок диагностики')
+            return data
+    return diagnostics.collect_diagnostics(ctx, runtime_reader=reader, progress=progress)
+
+
+def journal(context=None):
+    """Read accessible service messages; permission hints are returned to UI."""
+    from .diagnostics import journal_snapshot
+    ctx = context if context is not None else core.BackendContext.from_settings()
+    return journal_snapshot(ctx)

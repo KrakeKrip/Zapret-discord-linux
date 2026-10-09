@@ -14,6 +14,9 @@ ApplicationWindow {
 
     // design/gui-v1/SPEC.md: узкое окно
     readonly property bool narrow: width < 960
+    readonly property int pageIndex: navMain.checked ? 0 : navProfiles.checked ? 1 : navStrategies.checked ? 2 : navDiagnostics.checked ? 3 : 4
+    readonly property var pageTitles: [qsTr("Главная"), qsTr("Профили"), qsTr("Стратегии"), qsTr("Диагностика"), qsTr("Журнал")]
+    readonly property var pageSubtitles: [qsTr("Сервис и текущая настройка подключения"), qsTr("Сохранённые настройки для разных подключений"), qsTr("Выберите стратегию для вашего подключения"), qsTr("Проверка Discord и текущего сетевого пути"), qsTr("Последние сообщения сервиса")]
 
     onClosing: function (close) {
         if (!bridge.requestClose())
@@ -94,7 +97,7 @@ ApplicationWindow {
 
         ColumnLayout {
             anchors.fill: parent
-            anchors.margins: 24
+            anchors.margins: window.narrow ? 16 : 24
             spacing: 8
 
             RowLayout {
@@ -174,6 +177,19 @@ ApplicationWindow {
                 text: qsTr("Стратегии")
             }
 
+            NavButton {
+                id: navDiagnostics
+                objectName: "navDiagnostics"
+                iconName: "diagnostic"
+                text: qsTr("Диагностика")
+            }
+            NavButton {
+                id: navJournal
+                objectName: "navJournal"
+                iconName: "journal"
+                text: qsTr("Журнал")
+            }
+
             Item {
                 Layout.fillHeight: true
             }
@@ -219,16 +235,18 @@ ApplicationWindow {
             }
         }
         contentItem: RowLayout {
-            spacing: 12
+            spacing: 10
             GuiIcon {
                 name: navTemplate.iconName
                 color: navTemplate.checked ? Theme.accent : Theme.muted
-                Layout.leftMargin: 12
+                Layout.leftMargin: 8
             }
             Label {
                 text: navTemplate.text
+                Layout.fillWidth: true
+                elide: Text.ElideRight
                 color: navTemplate.checked ? Theme.text : Theme.muted
-                font.pixelSize: 14
+                font.pixelSize: window.narrow ? 13 : 14
                 font.weight: navTemplate.checked ? Font.DemiBold : Font.Normal
             }
         }
@@ -251,13 +269,13 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 spacing: 4
                 Label {
-                    text: navMain.checked ? qsTr("Главная") : navProfiles.checked ? qsTr("Профили") : qsTr("Стратегии")
+                    text: window.pageTitles[window.pageIndex]
                     color: Theme.text
                     font.pixelSize: 26
                     font.weight: Font.DemiBold
                 }
                 Label {
-                    text: navMain.checked ? qsTr("Сервис и текущая настройка подключения") : navProfiles.checked ? qsTr("Сохранённые настройки для разных подключений") : qsTr("Выберите стратегию для вашего подключения")
+                    text: window.pageSubtitles[window.pageIndex]
                     color: Theme.muted
                     font.pixelSize: 12
                     Layout.fillWidth: true
@@ -266,6 +284,7 @@ ApplicationWindow {
             }
             AppButton {
                 text: qsTr("Обновить")
+                visible: window.pageIndex < 3
                 onClicked: bridge.refreshManual()
             }
         }
@@ -280,7 +299,7 @@ ApplicationWindow {
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.topMargin: 16
-            currentIndex: navMain.checked ? 0 : (navProfiles.checked ? 1 : 2)
+            currentIndex: window.pageIndex
 
             // ==================== Главная ====================
             ScrollView {
@@ -836,6 +855,177 @@ ApplicationWindow {
                     text: qsTr("Остальные параметры подключения сохраняются.")
                     color: Theme.muted
                     font.pixelSize: 11
+                }
+            }
+            // ==================== Диагностика ====================
+            ColumnLayout {
+                spacing: 14
+                Label {
+                    text: bridge.diagnosticStatus
+                    color: Theme.toneColor(bridge.diagnosticTone)
+                    font.pixelSize: 16
+                    font.weight: Font.DemiBold
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                }
+                Label {
+                    text: qsTr("Проверяется текущий сетевой путь. VPN может повлиять на результат; голос и трансляции проверяются отдельно.")
+                    color: Theme.muted
+                    font.pixelSize: 12
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                }
+                CheckBox {
+                    id: diagnosticElevate
+                    objectName: "diagnosticElevate"
+                    text: qsTr("Проверить firewall с правами администратора")
+                    enabled: !bridge.busy && !bridge.closing
+                    indicator: Rectangle {
+                        implicitWidth: 20
+                        implicitHeight: 20
+                        y: (diagnosticElevate.height - height) / 2
+                        radius: 5
+                        color: Theme.input
+                        border.color: diagnosticElevate.visualFocus || diagnosticElevate.checked ? Theme.accent : Theme.border
+                        border.width: diagnosticElevate.visualFocus ? 2 : 1
+                        GuiIcon {
+                            anchors.centerIn: parent
+                            width: 16
+                            height: 16
+                            name: "check"
+                            color: Theme.accent
+                            visible: diagnosticElevate.checked
+                        }
+                    }
+                    contentItem: Label {
+                        text: diagnosticElevate.text
+                        color: diagnosticElevate.enabled ? Theme.text : Theme.muted
+                        font.pixelSize: 12
+                        leftPadding: diagnosticElevate.indicator.width + diagnosticElevate.spacing
+                    }
+                }
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: 12
+                    AppButton {
+                        objectName: "runDiagnosticsButton"
+                        variant: "primary"
+                        text: qsTr("Проверить Discord")
+                        enabled: !bridge.busy && !bridge.closing
+                        onClicked: bridge.runDiagnostics(diagnosticElevate.checked)
+                    }
+                    AppButton {
+                        text: qsTr("Скопировать отчёт")
+                        enabled: bridge.diagnosticReport.length > 0
+                        onClicked: bridge.copyText(bridge.diagnosticReport)
+                    }
+                }
+                Label {
+                    visible: bridge.diagnosticReport.length > 0
+                    text: qsTr("Результат последней завершённой проверки")
+                    color: Theme.muted
+                    font.pixelSize: 11
+                }
+                ScrollView {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    TextArea {
+                        objectName: "diagnosticReportArea"
+                        text: bridge.diagnosticReport
+                        readOnly: true
+                        selectByMouse: true
+                        textFormat: TextEdit.PlainText
+                        wrapMode: TextEdit.Wrap
+                        color: Theme.text
+                        font.pixelSize: 13
+                        padding: 16
+                        background: Rectangle {
+                            color: Theme.input
+                            radius: 10
+                            border.color: Theme.border
+                        }
+                    }
+                }
+            }
+
+            // ==================== Журнал ====================
+            ColumnLayout {
+                spacing: 14
+                Label {
+                    text: bridge.journalStatus
+                    color: Theme.text
+                    font.pixelSize: 16
+                    font.weight: Font.DemiBold
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                }
+                Label {
+                    text: qsTr("До 100 последних записей. Показаны сообщения, доступные вашему пользователю.")
+                    color: Theme.muted
+                    font.pixelSize: 12
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                }
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: 12
+                    AppButton {
+                        objectName: "refreshJournalButton"
+                        text: qsTr("Обновить журнал")
+                        variant: "primary"
+                        enabled: !bridge.busy && !bridge.closing
+                        onClicked: bridge.refreshJournal()
+                    }
+                    AppButton {
+                        objectName: "copyJournalButton"
+                        text: qsTr("Скопировать журнал")
+                        enabled: bridge.journalText.length > 0 || bridge.journalWarning.length > 0
+                        onClicked: bridge.copyText(bridge.journalText + "\n" + bridge.journalWarning)
+                    }
+                }
+                Label {
+                    visible: bridge.journalWarning !== ""
+                    text: bridge.journalWarning
+                    color: Theme.warning
+                    font.pixelSize: 12
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                    maximumLineCount: 4
+                    elide: Text.ElideRight
+                    HoverHandler {
+                        id: journalHintHover
+                    }
+                    ToolTip.visible: journalHintHover.hovered
+                    ToolTip.text: bridge.journalWarning
+                }
+                Label {
+                    visible: bridge.journalText.length > 0
+                    text: qsTr("Последний полученный журнал")
+                    color: Theme.muted
+                    font.pixelSize: 11
+                }
+                ScrollView {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    TextArea {
+                        objectName: "journalArea"
+                        text: bridge.journalText
+                        readOnly: true
+                        selectByMouse: true
+                        textFormat: TextEdit.PlainText
+                        wrapMode: TextEdit.Wrap
+                        color: Theme.text
+                        font.family: "monospace"
+                        font.pixelSize: 12
+                        padding: 16
+                        background: Rectangle {
+                            color: Theme.input
+                            radius: 10
+                            border.color: Theme.border
+                        }
+                    }
                 }
             }
         }

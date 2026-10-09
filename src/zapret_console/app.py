@@ -164,27 +164,8 @@ def status(ctx):
 
 
 def gateway_probe():
-    s = socket.create_connection(('gateway.discord.gg', 443), timeout=8)
-    try:
-        s = ssl.create_default_context().wrap_socket(s, server_hostname='gateway.discord.gg')
-        s.sendall(b'GET /?v=10&encoding=json HTTP/1.1\r\nHost: gateway.discord.gg\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n')
-        data = b''
-        while b'\r\n\r\n' not in data:
-            part = s.recv(4096)
-            if not part or len(data) > 65536:
-                raise RuntimeError('Сервер не завершил WebSocket handshake')
-            data += part
-        headers, frame = data.split(b'\r\n\r\n', 1)
-        if b' 101 ' not in headers.split(b'\r\n')[0]:
-            raise RuntimeError('Сервер не принял WebSocket')
-        while len(frame) < 2:
-            part = s.recv(4096)
-            if not part:
-                raise RuntimeError('WebSocket закрылся до получения данных')
-            frame += part
-        return 'OK — WebSocket подключился, сервер прислал данные'
-    finally:
-        s.close()
+    from .diagnostics import gateway_probe as probe
+    return probe()
 
 
 def get_runtime(ctx):
@@ -209,46 +190,13 @@ def get_runtime(ctx):
 
 
 def diagnose(ctx):
-    from .diagnostics import runtime_summary
-    print('\nПроверка текущего сетевого пути. Это займёт до минуты…', flush=True)
+    from .diagnostics import collect_diagnostics
+    print('\nПроверка текущего сетевого пути. Это может занять некоторое время…', flush=True)
     print('Проверка firewall и очереди может запросить пароль sudo.', flush=True)
-    before = get_runtime(ctx)
-    checks = []
-    c = core.config(ctx)
-    lines = [f"Стратегия: {c['strategy']} · интерфейс: {c['interface']}", '']
-    try:
-        address = socket.getaddrinfo('discord.com', 443, socket.AF_INET)[0][4][0]
-        route = core.command(['ip', 'route', 'get', address]).stdout.strip()
-    except (OSError, subprocess.TimeoutExpired):
-        route = ''
-    lines += ['Маршрут к Discord:', route, '']
-    match = re.search(r'\bdev (\S+)', route)
-    for name, url in [('Страница приложения', 'https://discord.com/app'),
-                      ('API Discord', 'https://discord.com/api/v10/gateway')]:
-        print(f'  {name}…', flush=True)
-        try:
-            r = core.command(['curl', '--noproxy', '*', '-fSs', '--max-time', '12', '-o', '/dev/null',
-                              '-w', 'HTTP %{http_code}, получено %{size_download} байт', url], timeout=15)
-            lines.append(f"{name}: {'OK' if r.returncode == 0 else 'ОШИБКА'} — {r.stdout.strip()}")
-            checks.append(r.returncode == 0)
-            if r.returncode:
-                lines.append(r.stderr.strip())
-        except subprocess.TimeoutExpired:
-            checks.append(False)
-            lines.append(f'{name}: превышено время ожидания')
-    print('  WebSocket…', flush=True)
-    try:
-        lines.append(gateway_probe())
-        checks.append(True)
-    except Exception as e:
-        checks.append(False)
-        lines.append(f'WebSocket: ОШИБКА — {e}')
-    after = get_runtime(ctx)
-    lines += ['', 'Результат диагностики:', *runtime_summary(before, after, match.group(1) if match else None,
-                                                             c['interface'], len(checks) == 3 and all(checks))]
-    lines += ['', 'Голос и трансляция проверяются подключением к каналу в Discord.',
-              'Эта проверка не входит в голосовые каналы и не использует твой аккаунт.']
-    report = '\n'.join(lines)
+    result = collect_diagnostics(ctx, runtime_reader=lambda: get_runtime(ctx),
+                                 gateway=gateway_probe,
+                                 progress=lambda text: print('  ' + text, flush=True))
+    report = result['report']
     dest = Path(os.environ.get('XDG_STATE_HOME', str(Path.home() / '.local/state'))) / 'zapret-console/diagnostics.txt'
     core.atomic_write(dest, report + '\n')
     return report + f'\n\nОтчёт сохранён: {dest}'
@@ -419,8 +367,9 @@ def main():
                 subprocess.run(['clear'], check=False)
                 show(diagnose(ctx))
             elif choice == 'logs':
-                r = core.command(['journalctl', '-u', ctx.unit, '-n', '60', '--no-pager', '-o', 'short'])
-                show(r.stdout + r.stderr)
+                from .diagnostics import journal_snapshot
+                result = journal_snapshot(ctx, lines=60)
+                show(result['text'] + '\n' + result['warning'])
             elif choice == 'interface':
                 entries = [('any', 'Все интерфейсы')] + [(n, '') for n in sorted(os.listdir('/sys/class/net')) if n != 'lo']
                 selected = menu('Выбери интерфейс обычного подключения к интернету.', entries, core.config(ctx)['interface'], tags=True)

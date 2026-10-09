@@ -56,6 +56,21 @@ Canvas {
             ctx.lineTo(16, 15);
             ctx.moveTo(8, 15);
             ctx.lineTo(8, 21);
+        } else if (name === 'diagnostic') {
+            ctx.moveTo(2, 12);
+            ctx.lineTo(6, 12);
+            ctx.lineTo(9, 4);
+            ctx.lineTo(14, 20);
+            ctx.lineTo(17, 12);
+            ctx.lineTo(22, 12);
+        } else if (name === 'journal') {
+            ctx.rect(4, 3, 16, 18);
+            ctx.moveTo(8, 8);
+            ctx.lineTo(16, 8);
+            ctx.moveTo(8, 12);
+            ctx.lineTo(16, 12);
+            ctx.moveTo(8, 16);
+            ctx.lineTo(13, 16);
         } else if (name === 'power') {
             ctx.moveTo(12, 2.5);
             ctx.lineTo(12, 11.5);
