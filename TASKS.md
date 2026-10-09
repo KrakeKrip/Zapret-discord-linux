@@ -12,11 +12,11 @@
 | [TASK-004D](tasks/TASK-004D.md) | Завершён Codex | TASK-004 | Дизайн перенесён в QML; замечания Correction 01 исправлены Codex по просьбе пользователя, 146 тестов OK, Qt stderr чистый; reports/TASK-004D-codex-report.md |
 | [TASK-004B](tasks/TASK-004B.md) | Завершён Codex | TASK-004D | Общие диагностика/журнал, GUI вне потока интерфейса, явная авторизация расширенного чтения; reports/TASK-004B-report.md |
 | [TASK-005](tasks/TASK-005.md) | Завершён Codex | TASK-004B | Textual и совместная работа с GUI, общий client.Backend; reports/TASK-005-report.md |
-| [TASK-006](tasks/TASK-006.md) | Реализован и проверен в staging; host-установка ждёт sudo | TASK-005 | Полная установка GUI/TUI, два ярлыка, rollback, 193 теста OK; reports/TASK-006-report.md |
-
-| TASK-007 | Завершён Codex; обновление host ждёт sudo | TASK-006 | Zapret Manager: Textual удалён, простое whiptail-меню по умолчанию, 197 тестов OK; reports/TASK-007-report.md |
-
+| [TASK-006](tasks/TASK-006.md) | Завершён; установлен на предыдущей машине | TASK-005 | Полная установка GUI/TUI, два ярлыка, rollback, 193 теста OK; reports/TASK-006-report.md |
+| TASK-007 | Завершён Codex; host 0.3.1 подтверждён | TASK-006 | Zapret Manager: Textual удалён, простое whiptail-меню по умолчанию, 197 тестов OK; reports/TASK-007-report.md |
 | TASK-008 | Подготовлен и проверен; восстановление host ждёт sudo | TASK-007 | Восстановление архивного движка без старого меню; read-only меню без backend; hard links архивных списков поддержаны; 208 тестов OK; reports/TASK-008-report.md |
+
+| TASK-009 | Подготовка выпуска | TASK-008 | Версия 0.3.2, Release/Packages, README и перенос разработки через AGENTS/HANDOFF |
 
 ## Отдельные наблюдения вне TASK-001
 

@@ -1,0 +1,86 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    env:
+      QT_QPA_PLATFORM: offscreen
+      QT_QUICK_BACKEND: software
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Validate version
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version="$(python -c 'import runpy; print(runpy.run_path("scripts/build-release.py")["version"]())')"
+          test "$RELEASE_TAG" = "v$version"
+          echo "number=$version" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/zapret-manager" >> "$GITHUB_OUTPUT"
+      - name: Native Qt dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libxcb-cursor0 libxkbcommon-x11-0 desktop-file-utils
+      - name: Python dependencies
+        run: python -m pip install '.[gui]' build
+      - name: Regression and source checks
+        run: |
+          python -m unittest discover -s tests -v
+          python -m compileall -q src scripts packaging/launcher.py
+          bash -n scripts/install.sh scripts/uninstall.sh scripts/setup.sh
+          git diff --check
+      - name: Build versioned release files
+        run: python scripts/build-release.py
+      - name: Upload build files
+        uses: actions/upload-artifact@v4
+        with:
+          name: zapret-manager-${{ steps.version.outputs.number }}
+          path: dist/*
+      - name: Sign in to GitHub Packages
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      - name: Publish package version
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packaging/Dockerfile
+          push: true
+          tags: ${{ steps.version.outputs.image }}:${{ steps.version.outputs.number }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.number }}
+            REVISION=${{ github.sha }}
+            SOURCE_URL=${{ github.server_url }}/${{ github.repository }}
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.version.outputs.number }}
+          IMAGE: ${{ steps.version.outputs.image }}
+        run: |
+          cat > /tmp/release-notes.md <<EOF_NOTES
+          Zapret Manager $VERSION: графическое окно PySide6/QML и простое терминальное меню whiptail.
+
+          Для установки скачайте zapret-manager-$VERSION-linux.tar.gz, распакуйте и запустите sudo bash scripts/setup.sh. Для обновления только интерфейса используйте sudo bash scripts/install.sh.
+
+          Приложение управляет отдельным движком nfqws; wheel и OCI-сборка не включают движок или стратегии. Packages: $IMAGE:$VERSION — файлы выпуска в /packages, не контейнер для запуска обхода.
+
+          SHA256SUMS содержит контрольные суммы файлов. Подробности и продолжение разработки: README.md, HANDOFF.md, CONTRIBUTING.md.
+          EOF_NOTES
+          gh release create "$RELEASE_TAG" dist/* --verify-tag --title "Zapret Manager $VERSION" --notes-file /tmp/release-notes.md
