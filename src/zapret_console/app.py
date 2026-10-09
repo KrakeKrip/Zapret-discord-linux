@@ -19,7 +19,7 @@ import tempfile
 from . import core
 from .core import BackendContext
 
-VERSION = '0.2.0'
+VERSION = '0.3.0'
 LAUNCHER = '/usr/local/bin/zapret-console'
 
 VALUE_ACTIONS = frozenset({'strategy', 'interface', 'profile-save', 'profile-replace',
@@ -325,10 +325,7 @@ def main():
         print(diagnose(ctx))
         return
     if not args.legacy_menu:
-        try:
-            from .tui.app import run_tui
-        except ImportError:
-            raise RuntimeError('TUI-модули пока доступны из исходников; прежнее меню: --legacy-menu')
+        from .tui.app import run_tui
         raise SystemExit(run_tui())
     if not sys.stdin.isatty():
         raise RuntimeError('Запусти zapret-console в терминале; для скриптов есть --status и --diagnose')

@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Zapret Console (Terminal)
+Name[ru]=Zapret — терминал
+Comment=Manage zapret in a terminal
+Comment[ru]=Управление zapret в терминале
+Exec=/usr/local/bin/zapret-console --tui
+TryExec=/usr/local/bin/zapret-console
+Icon=zapret-console
+Terminal=true
+Categories=Network;
+Keywords=zapret;Discord;terminal;

@@ -99,8 +99,30 @@ def create_backend(root, interface, strategy, unit, runner=run, system_dir=Path(
             shutil.rmtree(temp)
 
 
+def dependency_packages(ui):
+    common = ['git', 'curl', 'whiptail', 'iproute2', 'nftables', 'sudo']
+    if ui != 'none':
+        common.append('python3-venv')
+    if ui == 'all':
+        common += ['pkexec', 'polkitd', 'libegl1', 'libgl1', 'libxcb-cursor0',
+                   'libxcb-icccm4', 'libxcb-image0', 'libxcb-keysyms1',
+                   'libxcb-render-util0', 'libxcb-randr0', 'libxcb-shape0',
+                   'libxcb-xfixes0', 'libxcb-sync1', 'libxcb-xkb1',
+                   'libxkbcommon-x11-0', 'libdbus-1-3']
+    return common
+
+
+def ensure_dependencies(ui):
+    packages = dependency_packages(ui)
+    probe = subprocess.run(['dpkg-query', '-W', '-f=${db:Status-Status}\n', *packages], capture_output=True, text=True)
+    if probe.returncode != 0 or probe.stdout.splitlines() != ['installed'] * len(packages):
+        run(['apt-get', 'update'])
+        run(['apt-get', 'install', '-y', *packages])
+
+
 def main():
     parser = argparse.ArgumentParser(description='Мастер установки Zapret Console')
+    parser.add_argument('--ui', choices=('all', 'tui', 'none'), default='all', help='all: окно и терминал; tui: только терминал; none: только CLI')
     parser.add_argument('--yes', action='store_true', help='Использовать значения по умолчанию без вопросов')
     parser.add_argument('--dry-run', action='store_true', help='Показать план без изменений и загрузок')
     parser.add_argument('--interface')
@@ -119,7 +141,7 @@ def main():
     plan = backend_plan(root)
     print(f'Каталог: {root}\nСервис: {unit}\nДействие: ' + ('подключить существующую установку' if plan == 'adopt' else 'установить движок и стратегии'))
     if args.dry_run:
-        print('План: зависимости Ubuntu/Debian; зафиксированная версия адаптера; интерфейс; стратегия; установка меню.')
+        print(f'План: зависимости Ubuntu/Debian; адаптер; изолированное окружение UI ({args.ui}); приложение и desktop-ярлыки.')
         print('Текущая конфигурация существующей установки будет сохранена.')
         return
     if os.geteuid() != 0:
@@ -132,10 +154,7 @@ def main():
     if not args.yes:
         if input('Продолжить установку? [Y/n] ').strip().lower() not in ('', 'y', 'yes', 'д', 'да'):
             return
-    deps = ('git', 'curl', 'whiptail', 'ip', 'nft', 'sudo')
-    if any(not shutil.which(n) for n in deps):
-        run(['apt-get', 'update'])
-        run(['apt-get', 'install', '-y', 'git', 'curl', 'whiptail', 'iproute2', 'nftables', 'sudo'])
+    ensure_dependencies(args.ui)
     if plan == 'create':
         running = subprocess.run(['pgrep', '-x', 'nfqws'], capture_output=True)
         if running.returncode == 0:
@@ -155,11 +174,11 @@ def main():
         print(f'Первый профиль: {strategy} / {interface}. Работоспособность проверяется после установки.')
         create_backend(root, interface, strategy, unit)
     source = Path(__file__).resolve().parents[2]
-    run(['bash', str(source / 'scripts/install.sh'), '--backend-root', str(root), '--service', unit])
+    run(['bash', str(source / 'scripts/install.sh'), '--backend-root', str(root), '--service', unit, '--ui', args.ui])
     if plan == 'create' and args.autostart:
         run(['systemctl', 'enable', '--now', unit])
     elif plan == 'create':
-        print('Движок установлен и остановлен. Открой zapret-console и выбери «Включить».')
+        print('Движок установлен и остановлен. Открой zapret-console и нажми «Запустить».')
     print('Мастер завершён. Запуск: zapret-console')
 
 

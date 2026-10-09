@@ -91,3 +91,26 @@ class SetupTests(unittest.TestCase):
         for root in (Path('/opt/bad path'), Path('/opt/../bad'), Path('/opt/bad\nExecStart=evil')):
             with self.assertRaises(ValueError):
                 setup.unit_text(root)
+
+
+class DependencyTests(unittest.TestCase):
+    def test_gui_packages_are_optional_but_venv_is_present(self):
+        self.assertIn('python3-venv', setup.dependency_packages('tui'))
+        self.assertNotIn('pkexec', setup.dependency_packages('tui'))
+        self.assertIn('pkexec', setup.dependency_packages('all'))
+        self.assertIn('libxcb-cursor0', setup.dependency_packages('all'))
+
+    def test_missing_native_dependency_installs_before_application(self):
+        import subprocess
+        with patch.object(setup.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1, '', 'missing')), patch.object(setup, 'run') as runner:
+            setup.ensure_dependencies('all')
+        self.assertEqual(runner.call_args_list[0].args[0], ['apt-get', 'update'])
+        self.assertIn('python3-venv', runner.call_args_list[1].args[0])
+        self.assertIn('pkexec', runner.call_args_list[1].args[0])
+
+    def test_installed_dependencies_do_not_run_apt(self):
+        import subprocess
+        installed = '\n'.join(['installed'] * len(setup.dependency_packages('tui'))) + '\n'
+        with patch.object(setup.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, installed, '')), patch.object(setup, 'run') as runner:
+            setup.ensure_dependencies('tui')
+        runner.assert_not_called()

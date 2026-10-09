@@ -31,6 +31,9 @@ def run_gui():
 
     app = QGuiApplication(sys.argv[:1])
     app.setApplicationName('Zapret Console')
+    app.setDesktopFileName('zapret-console')
+    from PySide6.QtGui import QIcon
+    app.setWindowIcon(QIcon.fromTheme('zapret-console'))
     engine = QQmlApplicationEngine()
     from .bridge import BackendBridge, RealBackend
     bridge = BackendBridge(RealBackend(mode='gui'))

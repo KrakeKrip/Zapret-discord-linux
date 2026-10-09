@@ -12,7 +12,7 @@
 | [TASK-004D](tasks/TASK-004D.md) | Завершён Codex | TASK-004 | Дизайн перенесён в QML; замечания Correction 01 исправлены Codex по просьбе пользователя, 146 тестов OK, Qt stderr чистый; reports/TASK-004D-codex-report.md |
 | [TASK-004B](tasks/TASK-004B.md) | Завершён Codex | TASK-004D | Общие диагностика/журнал, GUI вне потока интерфейса, явная авторизация расширенного чтения; reports/TASK-004B-report.md |
 | [TASK-005](tasks/TASK-005.md) | Завершён Codex | TASK-004B | Textual и совместная работа с GUI, общий client.Backend; reports/TASK-005-report.md |
-| TASK-006 | Запланирован, TASK не выдан | TASK-005 | Установка зависимостей, desktop-ярлык и системная проверка |
+| [TASK-006](tasks/TASK-006.md) | Реализован и проверен в staging; host-установка ждёт sudo | TASK-005 | Полная установка GUI/TUI, два ярлыка, rollback, 193 теста OK; reports/TASK-006-report.md |
 
 ## Отдельные наблюдения вне TASK-001
 

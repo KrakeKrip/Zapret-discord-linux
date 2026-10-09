@@ -474,6 +474,8 @@ class BackendBridge(QObject):
         destroys a running thread and never claims a running operation was
         cancelled. Closing does not block the GUI thread.
         """
+        if self._close_finished:
+            return True  # Qt quit sends another close event; now allow it.
         if not self._closing:
             self._closing = True
             self._timer.stop()

@@ -837,6 +837,53 @@ class GuiCliTests(unittest.TestCase):
         self.assertIn('.[gui]', r.stdout)
 
 
+    @unittest.skipUnless(HAVE_PYSIDE, 'PySide6 extra required')
+    def test_actual_application_exec_exits_after_safe_window_close(self):
+        code = r"""
+import sys, threading
+from pathlib import Path
+from PySide6.QtCore import QTimer, QUrl
+from PySide6.QtGui import QGuiApplication
+from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQuick import QQuickWindow
+from test_gui import FakeBackend
+from zapret_console.gui.bridge import BackendBridge
+app=QGuiApplication([])
+backend=FakeBackend()
+pending=sys.argv[1]=='pending'
+if pending:
+    backend.request_gate=threading.Event()
+bridge=BackendBridge(backend)
+engine=QQmlApplicationEngine()
+engine.rootContext().setContextProperty('bridge',bridge)
+engine.load(QUrl.fromLocalFile(str(Path(sys.argv[2])/'src/zapret_console/gui/qml/Main.qml')))
+window=engine.rootObjects()[0]
+bridge.start()
+def close():
+    if pending:
+        bridge.restartService()
+        QTimer.singleShot(100, window.close)
+        QTimer.singleShot(300, backend.request_gate.set)
+    else:
+        window.close()
+QTimer.singleShot(200, close)
+QTimer.singleShot(2000, lambda: app.exit(73))
+result=app.exec()
+assert not bridge._worker.isRunning()
+assert bridge.requestClose() is True
+assert len(backend.requests)==int(pending)
+del engine
+bridge.stop()
+sys.exit(result)
+"""
+        for state in ('idle', 'pending'):
+            with self.subTest(state=state):
+                env=dict(os.environ, PYTHONPATH=os.pathsep.join([str(ROOT/'src'),str(ROOT/'tests')]), QT_QPA_PLATFORM='offscreen', QT_QUICK_BACKEND='software')
+                result=subprocess.run([sys.executable,'-c',code,state,str(ROOT)],env=env,capture_output=True,text=True,timeout=15)
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertEqual(result.stderr,'')
+
+
 class PackageDataTests(unittest.TestCase):
     def test_wheel_contains_qml_resources(self):
         try:
