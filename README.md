@@ -1,6 +1,6 @@
 # Zapret Manager
 
-**Zapret Manager 0.3.2 — графическое приложение и простое терминальное меню для zapret в Linux.** Запуск и остановка, стратегии, сохранённые профили и диагностика Discord в одном месте.
+**Zapret Manager 0.3.3 — графическое приложение и простое терминальное меню для zapret в Linux.** Запуск и остановка, стратегии, сохранённые профили и диагностика Discord в одном месте.
 
 ```bash
 zapret-console
@@ -8,7 +8,7 @@ zapret-console
 
 Интерфейс на русском. В терминальном меню стрелки выбирают действие, Enter открывает его, Esc возвращает назад. Закрытие окна или меню не останавливает сервис.
 
-Установщик ставит GUI в отдельное окружение приложения и добавляет два ярлыка: окно и терминальное меню. Меню использует системный Python и whiptail. Если движок отсутствует, версия 0.3.2 показывает экран с подробностями, повторной проверкой и выходом. Системный Python не изменяется. При обновлении адаптер, сервис и профили сохраняются.
+Установщик ставит GUI в отдельное окружение приложения и добавляет два ярлыка: окно и терминальное меню. Меню использует системный Python и whiptail. Если движок отсутствует, версия 0.3.3 показывает экран с подробностями, повторной проверкой и выходом. Системный Python не изменяется. При обновлении адаптер, сервис и профили сохраняются.
 
 ## Возможности
 
@@ -30,18 +30,18 @@ zapret-console
 
 ## Версия и скачивание
 
-Версия: **0.3.2**. [GitHub Release](https://github.com/KrakeKrip/Zapret-discord-linux/releases/tag/v0.3.2) содержит полный Linux-архив, wheel, sdist и SHA256SUMS. Установка из полного архива:
+Версия: **0.3.3**. [GitHub Release](https://github.com/KrakeKrip/Zapret-discord-linux/releases/tag/v0.3.3) содержит полный Linux-архив, wheel, sdist и SHA256SUMS. Установка из полного архива:
 
 ```bash
-curl -fL -o zapret-manager-0.3.2-linux.tar.gz https://github.com/KrakeKrip/Zapret-discord-linux/releases/download/v0.3.2/zapret-manager-0.3.2-linux.tar.gz
-tar -xzf zapret-manager-0.3.2-linux.tar.gz
-cd zapret-manager-0.3.2
+curl -fL -o zapret-manager-0.3.3-linux.tar.gz https://github.com/KrakeKrip/Zapret-discord-linux/releases/download/v0.3.3/zapret-manager-0.3.3-linux.tar.gz
+tar -xzf zapret-manager-0.3.3-linux.tar.gz
+cd zapret-manager-0.3.3
 sudo bash scripts/setup.sh
 ```
 
 Для обновления только интерфейса используйте `sudo bash scripts/install.sh`: эта команда не устанавливает движок обратно и не перезапускает сервис. Wheel предназначен для Python-окружения; системные установщики и launcher находятся в полном архиве.
 
-В [GitHub Packages](https://github.com/users/KrakeKrip/packages/container/package/zapret-manager) версия хранится как `ghcr.io/krakekrip/zapret-manager:0.3.2`: OCI-сборка с файлами выпуска в `/packages`. Она служит для распространения сборки; приложение, systemd и сетевой движок запускаются на Linux-хосте, а не через `docker run`. Для обычной установки скачайте архив из Releases. Поддерживаемые реестры описаны в [документации GitHub Packages](https://docs.github.com/en/packages/learn-github-packages/introduction-to-github-packages#support-for-package-registries).
+В [GitHub Packages](https://github.com/users/KrakeKrip/packages/container/package/zapret-manager) версия хранится как `ghcr.io/krakekrip/zapret-manager:0.3.3`: OCI-сборка с файлами выпуска в `/packages`. Она служит для распространения сборки; приложение, systemd и сетевой движок запускаются на Linux-хосте, а не через `docker run`. Для обычной установки скачайте архив из Releases. Поддерживаемые реестры описаны в [документации GitHub Packages](https://docs.github.com/en/packages/learn-github-packages/introduction-to-github-packages#support-for-package-registries).
 
 ## Установка
 

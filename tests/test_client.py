@@ -172,6 +172,12 @@ class ClientTransportTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
+        launcher = self.root / 'launcher'
+        launcher.write_text('#!/bin/sh\n')
+        launcher.chmod(0o755)
+        launcher_patch = patch.object(client, 'LAUNCHER', str(launcher))
+        launcher_patch.start()
+        self.addCleanup(launcher_patch.stop)
 
     def tearDown(self):
         self.tmp.cleanup()

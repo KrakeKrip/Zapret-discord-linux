@@ -16,7 +16,7 @@
 | TASK-007 | Завершён Codex; host 0.3.1 подтверждён | TASK-006 | Zapret Manager: Textual удалён, простое whiptail-меню по умолчанию, 197 тестов OK; reports/TASK-007-report.md |
 | TASK-008 | Подготовлен и проверен; восстановление host ждёт sudo | TASK-007 | Восстановление архивного движка без старого меню; read-only меню без backend; hard links архивных списков поддержаны; 208 тестов OK; reports/TASK-008-report.md |
 
-| TASK-009 | Подготовка выпуска | TASK-008 | Версия 0.3.2, Release/Packages, README и перенос разработки через AGENTS/HANDOFF |
+| TASK-009 | Подготовка выпуска | TASK-008 | Версия 0.3.3 после исправления чистого CI, Release/Packages, README и перенос разработки через AGENTS/HANDOFF |
 
 ## Отдельные наблюдения вне TASK-001
 

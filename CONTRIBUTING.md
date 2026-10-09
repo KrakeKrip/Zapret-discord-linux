@@ -48,8 +48,8 @@ DESTDIR по умолчанию не загружает зависимости. 
 
 ```bash
 git push origin main
-git tag -a v0.3.2 -m 'Zapret Manager 0.3.2'
-git push origin v0.3.2
+git tag -a v0.3.3 -m 'Zapret Manager 0.3.3'
+git push origin v0.3.3
 ```
 
 Для следующего выпуска используйте его номер; существующие теги не перемещайте. `.github/workflows/release.yml` проверяет совпадение тега и версии, запускает полный headless regression и сборку, публикует GHCR и Release через GITHUB_TOKEN. Packages содержит OCI-образ с файлами в /packages; приложение на host устанавливается из release-архива. Образ не запускает GUI, systemd или nfqws. При первой публикации видимость GHCR по умолчанию private; владелец может сделать пакет public в настройках Packages.
