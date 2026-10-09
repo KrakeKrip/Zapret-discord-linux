@@ -9,7 +9,8 @@
 | [TASK-002](tasks/TASK-002.md) | Принят Codex | TASK-001 | Общий core и межпроцессная блокировка; 69 unittest, CLI, dry-run и staging install/import/uninstall независимо проверены; реальный UI/systemd не проверялись |
 | [TASK-003](tasks/TASK-003.md) | Принят Codex | TASK-002 | Correction 01/02 закрыты; 110 тестов OK. Общий клиент, структурированные результаты и защита устаревших сохранений; подробности reports/TASK-003-review-final.md |
 | [TASK-004](tasks/TASK-004.md) | Принят Codex | TASK-003 | Correction 01 закрыт; 136 тестов OK, чистый headless QML-прогон. Функциональная основа GUI принята; reports/TASK-004-review-final.md. Визуальный дизайн готовит Codex |
-| TASK-004B | Запланирован, TASK не выдан | TASK-004 | Дополнение GUI: диагностика и журнал через общий слой |
+| [TASK-004D](tasks/TASK-004D.md) | Готов к передаче GLM | TASK-004 | Реализация дизайна Codex: design/gui-v1/SPEC.md и макеты; без изменения core/client |
+| TASK-004B | Запланирован, TASK не выдан | TASK-004D | Дополнение GUI: диагностика и журнал через общий слой |
 | TASK-005 | Запланирован, TASK не выдан | TASK-004B | Textual и совместная работа двух интерфейсов |
 | TASK-006 | Запланирован, TASK не выдан | TASK-005 | Установка зависимостей, desktop-ярлык и системная проверка |
 
