@@ -28,3 +28,17 @@ main и v0.3.2 успешно отправлены через SSH. GitHub Checks
 
 
 Второй чистый прогон f41e6c6: Python 3.12/3.14 и desktop OK, Python 3.10 нашёл историческое ожидание Textual в wheel-тесте. Локальный старый build/lib маскировал его. PackageDataTests теперь собирает wheel из отдельной чистой копии src/metadata и явно отвергает /tui/. GUI CI/Release и инструкции dev устанавливают setuptools/wheel, чтобы упаковочный тест не пропускался в новых Python. Исторические build/ не использованы в реальной сборке выпуска. 208 тестов снова OK в GUI-venv.
+
+
+## Финальный результат
+
+- Исходники отправлены в main через SSH. Выпуск v0.3.3 создан из 3db21c5; v0.3.2 остался неудачной исторической попыткой, тег не перемещался.
+- Чистый Checks: Python 3.10, 3.12, 3.14 и desktop/staging — success. https://github.com/KrakeKrip/Zapret-discord-linux/actions/runs/37974235385
+- Checks тега: success. https://github.com/KrakeKrip/Zapret-discord-linux/actions/runs/37974413562
+- Release workflow, включая полный regression, build, GHCR push и создание release: success. https://github.com/KrakeKrip/Zapret-discord-linux/actions/runs/37974413582
+- Release https://github.com/KrakeKrip/Zapret-discord-linux/releases/tag/v0.3.3 содержит SHA256SUMS, zapret-manager-0.3.3-linux.tar.gz, zapret_console-0.3.3-py3-none-any.whl и zapret_console-0.3.3.tar.gz. Три файла реально скачаны без авторизации и SHA-256 совпали с опубликованным SHA256SUMS.
+- Package ghcr.io/krakekrip/zapret-manager:0.3.3 реально доступен anonymous pull. Registry API подтвердил manifest, version=0.3.3 и source=https://github.com/KrakeKrip/Zapret-discord-linux. Digest sha256:a799f6f5573d9838942546efe5a693cd62f74ae9356a8e00748b4d0da7f2ec62. Дополнительной настройки public владельцем не потребовалось.
+- Локальная итоговая сборка 0.3.3 успешна, checksums и отсутствие Textual проверены. Локальный полный regression — 208 OK, skipped=1. Правки fixture и wheel-теста затронули только тесты/CI; production transport security не ослаблена.
+- HANDOFF/TASKS обновлены фактическими итогами. Финальный docs-only commit отправляется с [skip ci], поскольку код совпадает с уже проверенным опубликованным тегом.
+
+Непроверенные сценарии: реальное восстановление движка после последней команды владельца, сетевой обход/голос Discord, установка движка на чистой ОС, визуальное состояние названий в работающем GNOME. Локальная установленная версия не обновлялась этим выпуском. Чужой reports/TASK-002-report.md остаётся untracked и сохранён.
