@@ -3,6 +3,7 @@ from contextlib import ExitStack, redirect_stdout
 import importlib.util
 import io
 import os
+import subprocess
 from pathlib import Path
 import tarfile
 import tempfile
@@ -52,7 +53,8 @@ class RestoreTests(unittest.TestCase):
                 member.size, member.mode = len(data), mode
                 archive.addfile(member, io.BytesIO(data))
             if extra:
-                archive.addfile(extra)
+                for member in extra if isinstance(extra, list) else [extra]:
+                    archive.addfile(member)
 
     def test_unpack_preserves_strategy_and_excludes_menus_and_profiles(self):
         self.bundle()
@@ -111,3 +113,64 @@ class RestoreTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'sudo'):
                 restore.main()
             installer.assert_not_called()
+
+    def hardlink(self, name, target):
+        member = tarfile.TarInfo(str(self.engine / name).lstrip('/'))
+        member.type = tarfile.LNKTYPE
+        member.linkname = target
+        return member
+
+    def test_gnu_tar_user_lists_hardlinks_are_restored_with_same_inode(self):
+        source = self.root / 'source'
+        source_engine = source / str(self.engine).lstrip('/')
+        source_engine.mkdir(parents=True)
+        for name, content in [('nfqws', b'engine'), ('service.sh', b'service'),
+                              ('conf.env', b'strategy=general_alt11.bat\n')]:
+            path = source_engine / name
+            path.write_bytes(content)
+            path.chmod(0o755 if name != 'conf.env' else 0o644)
+        lists = source_engine / 'zapret-latest/lists'
+        user_lists = source_engine / 'user-lists'
+        lists.mkdir(parents=True)
+        user_lists.mkdir()
+        names = ('list-exclude-user.txt', 'list-general-user.txt', 'ipset-exclude-user.txt')
+        for name in names:
+            (lists / name).write_text('user data')
+            os.link(lists / name, user_lists / name)
+        source_unit = source / str(self.unit).lstrip('/')
+        source_unit.parent.mkdir(parents=True)
+        source_unit.write_text(str(self.engine))
+        subprocess.run(['/usr/bin/tar', '-czf', str(self.archive), '-C', str(source), '--',
+                        str(self.engine).lstrip('/'), str(self.unit).lstrip('/')], check=True)
+        with tarfile.open(self.archive) as archive:
+            self.assertEqual(sum(member.islnk() for member in archive.getmembers()), 3)
+        restore.unpack_engine(self.archive, self.stage)
+        for name in names:
+            a, b = self.stage / 'zapret-latest/lists' / name, self.stage / 'user-lists' / name
+            self.assertEqual(a.read_text(), 'user data')
+            self.assertEqual(a.stat().st_ino, b.stat().st_ino)
+
+    def test_forward_hardlink_chain_resolves_to_regular_file(self):
+        first = self.hardlink('user-lists/first', str(self.engine / 'user-lists/second').lstrip('/'))
+        second = self.hardlink('user-lists/second', str(self.engine / 'conf.env').lstrip('/'))
+        self.bundle(extra=[first, second])
+        restore.unpack_engine(self.archive, self.stage)
+        self.assertEqual((self.stage / 'user-lists/first').stat().st_ino,
+                         (self.stage / 'conf.env').stat().st_ino)
+
+    def test_invalid_hardlink_targets_are_refused_before_any_writes(self):
+        for target in ['/etc/passwd', '../escape', str(self.unit).lstrip('/'),
+                       str(self.engine / 'missing').lstrip('/')]:
+            with self.subTest(target=target):
+                self.bundle(extra=self.hardlink('user-lists/link', target))
+                with self.assertRaises(RuntimeError):
+                    restore.unpack_engine(self.archive, self.stage)
+                self.assertEqual(list(self.stage.iterdir()), [])
+
+    def test_hardlink_cycle_is_refused_before_any_writes(self):
+        first = self.hardlink('first', str(self.engine / 'second').lstrip('/'))
+        second = self.hardlink('second', str(self.engine / 'first').lstrip('/'))
+        self.bundle(extra=[first, second])
+        with self.assertRaisesRegex(RuntimeError, 'Цикл'):
+            restore.unpack_engine(self.archive, self.stage)
+        self.assertEqual(list(self.stage.iterdir()), [])

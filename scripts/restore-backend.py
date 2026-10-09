@@ -23,13 +23,14 @@ def load_installer():
 
 
 def unpack_engine(archive, stage):
-    """Copy selected regular files/directories; never extract archived menus."""
+    """Restore files, directories and internal hard links; exclude archived menus."""
     prefix = PurePosixPath(str(BACKEND).lstrip('/'))
     unit_name = str(UNIT_FILE).lstrip('/')
     unit_data = None
     seen = set()
     with tarfile.open(archive, 'r:gz') as bundle:
         selected = []
+        members = {}
         for member in bundle.getmembers():
             name = PurePosixPath(member.name)
             if name.is_absolute() or '..' in name.parts:
@@ -42,17 +43,48 @@ def unpack_engine(archive, stage):
                 continue
             if name != prefix and prefix not in name.parents:
                 continue
-            if name in seen or not (member.isfile() or member.isdir()):
+            if name in seen or not (member.isfile() or member.isdir() or member.islnk()):
                 raise RuntimeError(f'Неподдерживаемый объект в резервной копии: {name}')
             seen.add(name)
             selected.append((member, name.relative_to(prefix)))
+            members[name] = member
         if unit_data is None or str(BACKEND).encode() not in unit_data:
             raise RuntimeError('В архиве нет подходящего сервиса')
+        def regular_target(name):
+            visited = set()
+            while True:
+                if name in visited:
+                    raise RuntimeError(f'Цикл жёстких ссылок в архиве: {name}')
+                visited.add(name)
+                member = members.get(name)
+                if member is None:
+                    raise RuntimeError(f'Цель жёсткой ссылки отсутствует в движке: {name}')
+                if member.isfile():
+                    return name
+                if not member.islnk():
+                    raise RuntimeError(f'Цель жёсткой ссылки не является файлом: {name}')
+                name = PurePosixPath(member.linkname)
+                if name.is_absolute() or '..' in name.parts or prefix not in name.parents:
+                    raise RuntimeError(f'Жёсткая ссылка выходит за каталог движка: {name}')
+
+        targets = {}
+        for name, member in members.items():
+            if name == prefix and not member.isdir():
+                raise RuntimeError('Корень движка в архиве не является каталогом')
+            for parent in name.parents:
+                if parent in members and not members[parent].isdir():
+                    raise RuntimeError(f'Родитель архивного файла не является каталогом: {parent}')
+            if member.islnk():
+                targets[name] = regular_target(name)
         for required in ('conf.env', 'nfqws', 'service.sh'):
-            if not any(str(relative) == required and member.isfile() for member, relative in selected):
+            name = prefix / required
+            if name not in members:
                 raise RuntimeError(f'В архиве отсутствует {required}')
+            regular_target(name)
         for member, relative in sorted(selected, key=lambda item: (len(item[1].parts), str(item[1]))):
             destination = stage.joinpath(*relative.parts)
+            if member.islnk():
+                continue
             if member.isdir():
                 destination.mkdir(parents=True, exist_ok=True)
                 destination.chmod(0o755)
@@ -61,6 +93,11 @@ def unpack_engine(archive, stage):
                 with bundle.extractfile(member) as stream, destination.open('xb') as output:
                     shutil.copyfileobj(stream, output)
                 destination.chmod(member.mode & 0o755)
+        for name, target in targets.items():
+            destination = stage.joinpath(*name.relative_to(prefix).parts)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            source = stage.joinpath(*target.relative_to(prefix).parts)
+            os.link(source, destination)
     if not os.access(stage / 'nfqws', os.X_OK):
         raise RuntimeError('Архивный nfqws не является исполняемым файлом')
     return unit_data
