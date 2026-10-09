@@ -326,10 +326,11 @@ def main():
     parser.add_argument('--status', action='store_true')
     parser.add_argument('--diagnose', action='store_true')
     parser.add_argument('--doctor', action='store_true', help='Проверить зависимости и подключение адаптера')
+    parser.add_argument('--gui', action='store_true', help='Открыть графическое окно (нужен пакет zapret-console[gui])')
     parser.add_argument('--request-json', help=argparse.SUPPRESS, metavar='JSON')
     args = parser.parse_args()
     if args.request_json is not None:
-        if args.admin or args.status or args.diagnose or args.doctor or args.json:
+        if args.admin or args.status or args.diagnose or args.doctor or args.json or args.gui:
             payload, code = _response(False, 'invalid_request', '--request-json не совмещается с другими режимами'), 1
         else:
             try:
@@ -338,6 +339,18 @@ def main():
                 payload, code = _response(False, 'operation_failed', f'Внутренняя ошибка: {e}'), 1
         print(json.dumps(payload, ensure_ascii=False))
         raise SystemExit(code)
+    if args.gui:
+        if args.admin or args.status or args.diagnose or args.doctor or args.json:
+            parser.error('--gui не совмещается с другими режимами')
+        try:
+            from .gui.app import run_gui
+        except ImportError:
+            print('GUI-модули не установлены. Графический интерфейс пока доступен из исходников:\n'
+                  '  python3 -m venv .venv\n'
+                  '  .venv/bin/pip install ".[gui]"\n'
+                  '  .venv/bin/python -m zapret_console --gui')
+            raise SystemExit(1)
+        raise SystemExit(run_gui())
     ctx = load_context()
     if args.json and not args.status:
         parser.error('--json используется вместе с --status')

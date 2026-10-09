@@ -15,5 +15,11 @@ classifiers = ["Operating System :: POSIX :: Linux", "Environment :: Console", "
 [project.scripts]
 zapret-console = "zapret_console.app:entrypoint"
 
+[project.optional-dependencies]
+gui = ["PySide6==6.12.0"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"zapret_console.gui" = ["qml/*.qml", "qml/qmldir"]

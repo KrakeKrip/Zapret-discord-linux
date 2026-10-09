@@ -71,11 +71,20 @@ sudo bash scripts/install.sh --backend-root /opt/my-zapret --service zapret_disc
 
 ```bash
 zapret-console                # открыть меню
+zapret-console --gui          # графическое окно (нужен пакет zapret-console[gui])
 zapret-console --status       # состояние и текущая конфигурация
 zapret-console --status --json
 zapret-console --doctor       # зависимости и подключение адаптера
 zapret-console --diagnose     # проверка Discord через текущий сетевой путь
 zapret-console --version
+```
+
+Графическое окно (экспериментально) содержит разделы «Главная», «Профили» и «Стратегии», работает с обычными правами и запрашивает авторизацию через polkit при изменениях. Для запуска из исходников:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install ".[gui]"
+.venv/bin/python -m zapret_console --gui
 ```
 
 При смене стратегии сохраняются интерфейс и параметры GameFilter. Если сервис работал, меню перезапустит его; если был остановлен, он останется остановленным. Изменения выполняются по одному. При неудачном перезапуске конфигурация возвращается, но сетевую доступность нужно проверить отдельно.
