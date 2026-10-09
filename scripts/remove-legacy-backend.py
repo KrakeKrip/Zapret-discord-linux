@@ -15,6 +15,24 @@ BACKEND = Path('/opt/zapret-discord-youtube-linux')
 UNIT = 'zapret_discord_youtube.service'
 UNIT_FILE = Path('/etc/systemd/system') / UNIT
 OLD_MENU = Path('/usr/local/bin/zapret-menu')
+BACKUP_DIR = Path('/var/backups/zapret-console')
+PROC_DIR = Path('/proc')
+OLD_STATE = Path('/var/lib/zapret-menu')
+
+
+def load_installer():
+    spec = importlib.util.spec_from_file_location('installer', SOURCE / 'scripts/install.py')
+    installer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(installer)
+    return installer
+
+
+def check_legacy_installation():
+    for path in (BACKEND, UNIT_FILE, OLD_MENU):
+        if path.is_symlink() or not path.exists() or path.stat().st_uid != 0 or path.stat().st_gid != 0 or path.stat().st_mode & 0o002:
+            raise RuntimeError(f'Неподходящий путь старой установки: {path}')
+    if str(BACKEND) not in UNIT_FILE.read_text() or str(BACKEND) not in OLD_MENU.read_text():
+        raise RuntimeError('Сервис/меню не относятся к ожидаемой старой установке')
 
 
 def main():
@@ -29,24 +47,19 @@ def main():
     if os.geteuid() != 0:
         raise RuntimeError('Нужна системная авторизация sudo/pkexec')
     os.umask(0o022)
-    for path in (BACKEND, UNIT_FILE, OLD_MENU):
-        if path.is_symlink() or not path.exists() or path.stat().st_uid != 0 or path.stat().st_gid != 0 or path.stat().st_mode & 0o002:
-            raise RuntimeError(f'Неподходящий путь старой установки: {path}')
-    if str(BACKEND) not in UNIT_FILE.read_text() or str(BACKEND) not in OLD_MENU.read_text():
-        raise RuntimeError('Сервис/меню не относятся к ожидаемой старой установке')
-    spec = importlib.util.spec_from_file_location('installer', SOURCE / 'scripts/install.py')
-    installer = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(installer)
-    backup_dir = installer.check_path(Path('/var/backups/zapret-console'))
+    check_legacy_installation()
+    installer = load_installer()
+    backup_dir = installer.check_path(BACKUP_DIR)
     backup_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     archive = backup_dir / ('legacy-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '.tar.gz')
-    log_file = installer.check_path(Path('/var/log/zapret-console-migration.log'))
-    with log_file.open('w') as log:
-        log_file.chmod(0o600)
+    log_file = installer.check_path(backup_dir / 'migration.log')
+    descriptor = os.open(log_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor, 'w') as log:
+        os.fchmod(log.fileno(), 0o600)
         def run(argv):
             subprocess.run(argv, check=True, stdout=log, stderr=subprocess.STDOUT, timeout=600)
         paths = [BACKEND, UNIT_FILE, OLD_MENU]
-        old_state = Path('/var/lib/zapret-menu')
+        old_state = OLD_STATE
         if old_state.exists() and not old_state.is_symlink():
             paths.append(old_state)
         print('Создаю резервную копию…', flush=True)
@@ -60,7 +73,7 @@ def main():
         active = subprocess.run(['/usr/bin/systemctl', 'is-active', UNIT], capture_output=True, text=True)
         if active.stdout.strip() not in ('inactive', 'failed'):
             raise RuntimeError('Сервис не остановлен; файлы не удаляются')
-        for proc in Path('/proc').iterdir():
+        for proc in PROC_DIR.iterdir():
             if not proc.name.isdigit():
                 continue
             try:
@@ -85,4 +98,4 @@ if __name__ == '__main__':
     try:
         main()
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
-        raise SystemExit(f'Миграция остановлена: {error}. Подробности: /var/log/zapret-console-migration.log')
+        raise SystemExit(f"Миграция остановлена: {error}. Журнал (если создан): {BACKUP_DIR / 'migration.log'}")
