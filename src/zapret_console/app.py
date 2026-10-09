@@ -116,6 +116,95 @@ def write_config(c):
     atomic_write(ROOT / 'conf.env', ''.join(f'{k}={c[k]}\n' for k in FIELDS))
 
 
+PROFILE_NAME = r'[A-Za-z0-9][A-Za-z0-9_-]{0,47}'
+PROFILE_NAME_HINT = ('Имя профиля: 1–48 символов, латинские буквы и цифры, '
+                     'внутри также "_" и "-". Первый символ — буква или цифра; точки, пробелы и '
+                     'разделители пути нельзя.')
+
+
+def profiles_dir():
+    return STATE / 'profiles'
+
+
+def profile_path(name):
+    if not isinstance(name, str) or not re.fullmatch(PROFILE_NAME, name):
+        raise ValueError(PROFILE_NAME_HINT)
+    return profiles_dir() / f'{name}.json'
+
+
+def check_profiles_dir(create=False):
+    """Reject symlinked profiles dir; for creation also require trusted owners (real trusted)."""
+    d = profiles_dir()
+    if d.is_symlink():
+        raise RuntimeError('Каталог профилей не может быть символической ссылкой')
+    if create:
+        if d.is_dir():
+            trusted(d)
+        elif d.exists():
+            raise RuntimeError(f'{d} должен быть каталогом профилей')
+        else:
+            trusted(STATE)
+            d.mkdir(parents=True)
+            # Ordinary users need read access for the unprivileged listing.
+            os.chmod(d, 0o755)
+            trusted(d)
+    return d
+
+
+def read_profile(path):
+    data = json.loads(path.read_text())
+    if not isinstance(data, dict) or set(data) != set(FIELDS):
+        raise ValueError(f'Профиль повреждён: {path.name} не содержит конфигурацию из пяти полей')
+    return data
+
+
+def profile_entries():
+    """Sorted [(name, config)] for menus; a damaged profile yields None instead of config."""
+    d = check_profiles_dir()
+    if not d.is_dir():
+        return []
+    entries = []
+    for p in sorted(d.iterdir()):
+        m = re.fullmatch(f'({PROFILE_NAME})\\.json', p.name)
+        if not m or p.is_symlink() or not p.is_file():
+            continue
+        try:
+            entries.append((m.group(1), read_profile(p)))
+        except (ValueError, OSError):
+            entries.append((m.group(1), None))
+    return entries
+
+
+def profile_label(name, data):
+    if data is None:
+        return f'{name} — повреждён, недоступен для восстановления'
+    return f'{name} — {data["strategy"]} · интерфейс: {data["interface"]}'
+
+
+def profile_op(action, name):
+    """Admin-side profile storage; revalidates name and paths independently of the menu."""
+    path = profile_path(name)
+    check_profiles_dir(create=action == 'profile-save')
+    if action == 'profile-save':
+        if path.is_symlink():
+            raise RuntimeError('Файл профиля не может быть символической ссылкой')
+        if path.exists():
+            raise RuntimeError(f'Профиль "{name}" уже существует. Замена требует отдельного подтверждения.')
+        atomic_write(path, json.dumps(config(), ensure_ascii=False, indent=2))
+        return
+    if path.is_symlink():
+        raise RuntimeError('Файл профиля не может быть символической ссылкой')
+    if not path.is_file():
+        raise RuntimeError(f'Профиль "{name}" не найден')
+    trusted(path)
+    if action == 'profile-replace':
+        atomic_write(path, json.dumps(config(), ensure_ascii=False, indent=2))
+    elif action == 'profile-restore':
+        apply_config(validate(read_profile(path)))
+    elif action == 'profile-delete':
+        os.unlink(path)
+
+
 def active():
     return command(['systemctl', 'is-active', UNIT]).returncode == 0
 
@@ -180,6 +269,8 @@ def admin(action, value=None):
         previous = STATE / 'previous.json'
         trusted(previous)
         apply_config(validate(json.loads(previous.read_text())))
+    elif action in ('profile-save', 'profile-replace', 'profile-restore', 'profile-delete'):
+        profile_op(action, value)
     else:
         raise ValueError('Неизвестное действие')
     print('Готово.')
@@ -346,11 +437,67 @@ def diagnose():
     return report + f'\n\nОтчёт сохранён: {dest}'
 
 
+def profiles_menu():
+    while True:
+        try:
+            selected = menu('Именованные профили: свои наборы настроек для разных подключений.', [
+                ('save', 'Сохранить текущую настройку под именем'),
+                ('restore', 'Восстановить выбранный профиль'),
+                ('delete', 'Удалить профиль')])
+        except (ValueError, RuntimeError, OSError, subprocess.TimeoutExpired) as e:
+            show(f'Ошибка: {e}')
+            return
+        if selected in (None, 'exit'):
+            return
+        try:
+            if selected == 'save':
+                name = dialog(['--inputbox', 'Введи имя нового профиля. ' + PROFILE_NAME_HINT, '10', '{W}'])
+                if name is None:
+                    continue
+                # whiptail may append a newline to the form result; typed spaces stay rejected.
+                name = name.rstrip('\n')
+                profile_path(name)
+                target = profiles_dir() / f'{name}.json'
+                if target.exists():
+                    if dialog(['--yesno', f'Профиль "{name}" уже существует. Заменить его текущей настройкой?', '10', '{W}']) is None:
+                        continue
+                    privileged('profile-replace', name)
+                else:
+                    privileged('profile-save', name)
+            elif selected == 'restore':
+                entries = profile_entries()
+                if not entries:
+                    show('Именованных профилей пока нет. Сохрани текущую настройку под именем.')
+                    continue
+                picked = menu('Какой профиль восстановить? Текущая настройка будет заменена.',
+                              [(n, profile_label(n, d)) for n, d in entries], tags=True)
+                if not picked:
+                    continue
+                if dict(entries)[picked] is None:
+                    show(f'Профиль "{picked}" повреждён: восстановление невозможно. Удали его и сохрани заново.')
+                    continue
+                privileged('profile-restore', picked)
+            elif selected == 'delete':
+                entries = profile_entries()
+                if not entries:
+                    show('Именованных профилей пока нет.')
+                    continue
+                picked = menu('Какой профиль удалить? Сама настройка сервиса не изменится.',
+                              [(n, profile_label(n, d)) for n, d in entries], tags=True)
+                if not picked:
+                    continue
+                if dialog(['--yesno', f'Удалить профиль "{picked}"? Вернуть его через меню будет нельзя.', '10', '{W}']) is not None:
+                    privileged('profile-delete', picked)
+        except (ValueError, RuntimeError, OSError, subprocess.TimeoutExpired) as e:
+            show(f'Ошибка: {e}\n\nТекущая настройка доступна через /opt/zapret-discord-youtube-linux/service.sh')
+
+
 def main():
     parser = argparse.ArgumentParser(description='Zapret Console — управление обходом DPI в Linux')
     parser.add_argument('--version', action='version', version=f'%(prog)s {VERSION}')
     parser.add_argument('--admin', help=argparse.SUPPRESS, choices=['start', 'stop', 'restart', 'enable', 'disable',
-                                         'strategy', 'interface', 'save-good', 'restore-good', 'restore-previous', 'runtime'])
+                                         'strategy', 'interface', 'save-good', 'restore-good', 'restore-previous', 'runtime',
+                                         'profile-save', 'profile-replace', 'profile-restore', 'profile-delete'])
     parser.add_argument('--value', help=argparse.SUPPRESS)
     parser.add_argument('--json', action='store_true', help='Машиночитаемый статус (с --status)')
     parser.add_argument('--status', action='store_true')
@@ -422,13 +569,16 @@ def main():
                 text = f"Сохранено: {saved['strategy']} / {saved['interface']}" if saved else 'Сохранённого профиля пока нет'
                 selected = menu(text, [('restore-good', 'Восстановить сохранённый профиль'),
                                        ('restore-previous', 'Отменить последнее изменение настроек'),
-                                       ('save-good', 'Сохранить текущую рабочую настройку')])
+                                       ('save-good', 'Сохранить текущую рабочую настройку'),
+                                       ('profiles', 'Именованные профили: сохранить / восстановить / удалить')])
                 if selected == 'save-good':
                     confirmed = dialog(['--yesno', 'Discord работает с текущей настройкой? Сохранить её вместо прежней рабочей?', '10', '{W}'])
                     if confirmed is not None:
                         privileged(selected)
                 elif selected in ('restore-good', 'restore-previous'):
                     privileged(selected)
+                elif selected == 'profiles':
+                    profiles_menu()
             elif choice == 'diagnose':
                 subprocess.run(['clear'], check=False)
                 show(diagnose())
