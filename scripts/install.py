@@ -34,6 +34,30 @@ def check_path(path):
     return path
 
 
+
+def repair_legacy_base(base):
+    """Normalize only the root:root group-writable directory from release 0.2."""
+    if os.geteuid() != 0 or not base.exists() or base.is_symlink():
+        return
+    info = base.stat()
+    if info.st_uid != 0 or info.st_gid != 0 or info.st_mode & 0o002 or not info.st_mode & 0o020:
+        return
+    if (base / 'current').exists() or (base / 'current').is_symlink():
+        return
+    check_path(base.parent)
+    package = base / 'zapret_console'
+    markers = [package, package / '__init__.py', package / 'app.py']
+    for marker in markers:
+        if marker.is_symlink() or not marker.exists():
+            return
+        metadata = marker.stat()
+        if metadata.st_uid != 0 or metadata.st_gid != 0 or metadata.st_mode & 0o022:
+            return
+    if "__version__ = '0.2.0'" not in (package / '__init__.py').read_text():
+        return
+    base.chmod(stat.S_IMODE(info.st_mode) & ~0o022)
+    print('Права каталога старой root:root установки 0.2.0 исправлены.')
+
 def atomic(path, data, mode=0o644):
     check_path(path)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
@@ -90,7 +114,9 @@ def install(source, stage='', ui='all', with_deps=None, backend_root=None, unit=
     if not stage and os.geteuid() != 0:
         raise RuntimeError('Установка: sudo bash scripts/install.sh')
     prefix = Path(stage + '/usr/local')
-    base = check_path(prefix / 'lib' / 'zapret-console')
+    base = prefix / 'lib' / 'zapret-console'
+    repair_legacy_base(base)
+    check_path(base)
     settings = check_path(Path(stage + '/etc/zapret-console/settings.json'))
     state = check_path(Path(stage + '/var/lib/zapret-console'))
     original_settings = settings.read_bytes() if settings.exists() else None

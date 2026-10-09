@@ -246,3 +246,30 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(self.settings.read_bytes(), original)
         self.install(backend_root='/opt/new')
         self.assertEqual(json.loads(self.settings.read_bytes())['extra'], 42)
+
+
+    def test_only_verified_root_legacy_directory_permissions_are_normalized(self):
+        package = self.base / 'zapret_console'
+        package.mkdir(parents=True)
+        (package / '__init__.py').write_text("__version__ = '0.2.0'\n")
+        (package / 'app.py').write_text('legacy')
+        self.base.chmod(0o775)
+        real_stat = Path.stat
+        def root_stat(path, *args, **kwargs):
+            result = list(real_stat(path, *args, **kwargs))
+            result[4] = result[5] = 0
+            return os.stat_result(result)
+        with patch('os.geteuid', return_value=0), patch.object(Path, 'stat', root_stat):
+            installer.repair_legacy_base(self.base)
+        self.assertEqual(self.base.stat().st_mode & 0o777, 0o755)
+
+    def test_legacy_repair_does_not_relax_world_writable_or_unknown_install(self):
+        self.base.mkdir(parents=True)
+        self.base.chmod(0o777)
+        with patch('os.geteuid', return_value=0):
+            installer.repair_legacy_base(self.base)
+        self.assertEqual(self.base.stat().st_mode & 0o777, 0o777)
+        self.base.chmod(0o775)
+        with patch('os.geteuid', return_value=0):
+            installer.repair_legacy_base(self.base)
+        self.assertEqual(self.base.stat().st_mode & 0o777, 0o775)
