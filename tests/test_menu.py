@@ -30,6 +30,31 @@ class TerminalMenuTests(unittest.TestCase):
                 self.assertIn('good', entries)
                 mutation.assert_not_called()
 
+    def test_missing_engine_opens_read_only_menu_and_exit_succeeds(self):
+        with patch.object(cli.sys, 'argv', ['zapret-console']), patch.object(cli, 'load_context'), \
+             patch.object(cli.sys.stdin, 'isatty', return_value=True), \
+             patch.object(cli.shutil, 'which', return_value='/usr/bin/whiptail'), \
+             patch.object(cli.core, 'preflight', return_value=['Не найден движок']), \
+             patch.object(cli, 'menu', return_value='exit') as menu, \
+             patch.object(cli, 'status') as status, patch.object(cli, 'privileged') as mutation:
+            cli.main()
+            self.assertIn('Движок не подключён', menu.call_args.args[0])
+            self.assertEqual(set(dict(menu.call_args.args[1])), {'details', 'retry', 'exit'})
+            status.assert_not_called()
+            mutation.assert_not_called()
+
+    def test_missing_engine_can_be_rechecked_and_details_read_without_sudo(self):
+        with patch.object(cli.sys, 'argv', ['zapret-console']), patch.object(cli, 'load_context'), \
+             patch.object(cli.sys.stdin, 'isatty', return_value=True), \
+             patch.object(cli.shutil, 'which', return_value='/usr/bin/whiptail'), \
+             patch.object(cli.core, 'preflight', side_effect=[['Не найден движок'], ['Не найден движок'], []]), \
+             patch.object(cli, 'menu', side_effect=['details', 'retry', 'exit']), \
+             patch.object(cli, 'show') as details, patch.object(cli, 'status', return_value='ready'), \
+             patch.object(cli.core, 'active', return_value=False), patch.object(cli, 'privileged') as mutation:
+            cli.main()
+            details.assert_called_once_with('Не найден движок')
+            mutation.assert_not_called()
+
     def test_noninteractive_menu_explains_how_to_use_cli(self):
         with patch.object(cli.sys, 'argv', ['zapret-console']), patch.object(cli, 'load_context'), \
              patch.object(cli.sys.stdin, 'isatty', return_value=False), patch.object(cli, 'menu') as menu:

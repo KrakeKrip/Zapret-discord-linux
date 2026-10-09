@@ -16,6 +16,8 @@
 
 | TASK-007 | Завершён Codex; обновление host ждёт sudo | TASK-006 | Zapret Manager: Textual удалён, простое whiptail-меню по умолчанию, 197 тестов OK; reports/TASK-007-report.md |
 
+| TASK-008 | Подготовлен и проверен; восстановление host ждёт sudo | TASK-007 | Восстановление архивного движка без старого меню; read-only меню без backend; 204 теста OK; reports/TASK-008-report.md |
+
 ## Отдельные наблюдения вне TASK-001
 
 - Текст ошибки меню ссылается на фиксированный `/opt/zapret-discord-youtube-linux/service.sh` даже при другом backend_root. Исправление не включалось в TASK-001; учесть при задачах интерфейсов.

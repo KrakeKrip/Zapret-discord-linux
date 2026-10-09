@@ -327,8 +327,18 @@ def main():
     if not sys.stdin.isatty():
         raise RuntimeError('Запусти zapret-console в терминале; для скриптов есть --status и --diagnose')
     errors = core.preflight(ctx)
-    if errors:
-        raise RuntimeError('\n'.join(errors) + '\nИнструкция: README.md → Установка')
+    while errors:
+        if not shutil.which('whiptail'):
+            raise RuntimeError('Для терминального меню требуется whiptail')
+        choice = menu('Управление пока недоступно.\nДвижок не подключён или установка неполна.\n'
+                      'Для обхода нужен сетевой движок; интерфейс сам трафик не обрабатывает.',
+                      [('details', 'Показать, чего не хватает'),
+                       ('retry', 'Проверить снова'), ('exit', 'Выйти')])
+        if choice in (None, 'exit'):
+            return
+        if choice == 'details':
+            show('\n'.join(errors))
+        errors = core.preflight(ctx)
     while True:
         try:
             choice = menu(status(ctx), [

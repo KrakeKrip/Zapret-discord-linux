@@ -53,7 +53,7 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(self.launcher.stat().st_mode & 0o777, 0o755)
         result = subprocess.run([str(self.launcher), '--version'], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('0.3.1', result.stdout)
+        self.assertIn('0.3.2', result.stdout)
         for name in ('zapret-console.desktop', 'zapret-console-tui.desktop'):
             path = self.prefix / 'share/applications' / name
             self.assertTrue(path.is_file())
