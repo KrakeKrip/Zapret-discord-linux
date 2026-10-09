@@ -22,9 +22,75 @@ from .core import BackendContext
 VERSION = '0.2.0'
 LAUNCHER = '/usr/local/bin/zapret-console'
 
+VALUE_ACTIONS = frozenset({'strategy', 'interface', 'profile-save', 'profile-replace',
+                           'profile-restore', 'profile-delete'})
+NO_VALUE_ACTIONS = frozenset({'start', 'stop', 'restart', 'enable', 'disable',
+                              'save-good', 'restore-good', 'restore-previous', 'runtime'})
+
 
 def load_context():
     return BackendContext.from_settings()
+
+
+def _response(ok, code, message, data=None):
+    return {'protocol': 1, 'ok': ok, 'code': code, 'message': message, 'data': data}
+
+
+def parse_request(raw):
+    """Validate one --request-json payload; raises ValueError on any deviation."""
+    if len(raw.encode('utf-8')) > 65536:
+        raise ValueError('Размер запроса превышает 64 KiB')
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        raise ValueError('Запрос не является корректным JSON')
+    if not isinstance(data, dict) or set(data) != {'protocol', 'action', 'value', 'expected_revision'}:
+        raise ValueError('Запрос должен содержать ровно поля protocol, action, value, expected_revision')
+    if type(data['protocol']) is not int or data['protocol'] != 1:
+        raise ValueError('Неподдерживаемая версия протокола')
+    action = data['action']
+    if not isinstance(action, str) or (action not in VALUE_ACTIONS and action not in NO_VALUE_ACTIONS):
+        raise ValueError('Неизвестное действие')
+    value, revision = data['value'], data['expected_revision']
+    if action in VALUE_ACTIONS:
+        if not isinstance(value, str):
+            raise ValueError('Для этого действия value должен быть строкой')
+    elif value is not None:
+        raise ValueError('Для этого действия value должен быть null')
+    if action in core.REVISION_ACTIONS:
+        if not isinstance(revision, str) or not revision:
+            raise ValueError('Для этого действия требуется ожидаемая revision — непустая строка')
+    elif revision is not None:
+        raise ValueError('Для этого действия expected_revision должен быть null')
+    return {'action': action, 'value': value, 'expected_revision': revision}
+
+
+def request_endpoint(raw, context=None):
+    """Machine endpoint for --request-json; returns (payload, exit_code).
+
+    stdout carries exactly one JSON object with protocol/ok/code/message/data;
+    codes: ok, busy, conflict, invalid_request, permission_denied,
+    operation_failed.
+    """
+    try:
+        parsed = parse_request(raw)
+    except ValueError as e:
+        return _response(False, 'invalid_request', str(e)), 1
+    try:
+        ctx = context if context is not None else load_context()
+    except Exception as e:
+        return _response(False, 'operation_failed', f'Настройки недоступны: {e}'), 1
+    if os.geteuid() != 0:
+        return _response(False, 'permission_denied', 'Для системного изменения требуются права администратора'), 1
+    try:
+        result = core.admin_command(ctx, parsed['action'], parsed['value'], parsed['expected_revision'])
+    except core.BusyError as e:
+        return _response(False, 'busy', str(e)), 1
+    except core.ConflictError as e:
+        return _response(False, 'conflict', str(e)), 1
+    except (ValueError, RuntimeError, OSError, subprocess.TimeoutExpired) as e:
+        return _response(False, 'operation_failed', str(e)), 1
+    return _response(True, 'ok', '', result), 0
 
 
 def privileged(action, value=None):
@@ -260,7 +326,18 @@ def main():
     parser.add_argument('--status', action='store_true')
     parser.add_argument('--diagnose', action='store_true')
     parser.add_argument('--doctor', action='store_true', help='Проверить зависимости и подключение адаптера')
+    parser.add_argument('--request-json', help=argparse.SUPPRESS, metavar='JSON')
     args = parser.parse_args()
+    if args.request_json is not None:
+        if args.admin or args.status or args.diagnose or args.doctor or args.json:
+            payload, code = _response(False, 'invalid_request', '--request-json не совмещается с другими режимами'), 1
+        else:
+            try:
+                payload, code = request_endpoint(args.request_json)
+            except Exception as e:
+                payload, code = _response(False, 'operation_failed', f'Внутренняя ошибка: {e}'), 1
+        print(json.dumps(payload, ensure_ascii=False))
+        raise SystemExit(code)
     ctx = load_context()
     if args.json and not args.status:
         parser.error('--json используется вместе с --status')

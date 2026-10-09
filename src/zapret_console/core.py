@@ -8,6 +8,7 @@ through admin_command, which checks root, trusts the affected paths and
 serializes mutations with the STATE/.lock lock.
 """
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -22,6 +23,18 @@ DEFAULT_STATE = Path('/var/lib/zapret-console')
 DEFAULT_UNIT = 'zapret_discord_youtube.service'
 SETTINGS_PATH = Path('/etc/zapret-console/settings.json')
 FIELDS = ('interface', 'gamefiltertcp', 'gamefilterudp', 'strategy', 'firewall_backend')
+
+# File-changing actions that verify the caller's expected_revision under the lock.
+REVISION_ACTIONS = frozenset({'strategy', 'interface', 'save-good', 'restore-good', 'restore-previous',
+                              'profile-save', 'profile-replace', 'profile-restore', 'profile-delete'})
+
+
+class BusyError(RuntimeError):
+    """Another process holds the shared administrative lock."""
+
+
+class ConflictError(RuntimeError):
+    """Files changed since the caller read their revision; nothing was written."""
 
 
 class BackendContext:
@@ -196,11 +209,20 @@ def check_profiles_dir(ctx, create=False):
     return d
 
 
+def _profile_from_bytes(data, name=None):
+    label = (f'Профиль повреждён: {name} не содержит конфигурацию из пяти полей' if name
+             else 'Профиль повреждён: ожидается конфигурация из пяти полей')
+    try:
+        parsed = json.loads(data)
+    except ValueError:
+        raise ValueError(label)
+    if not isinstance(parsed, dict) or set(parsed) != set(FIELDS):
+        raise ValueError(label)
+    return parsed
+
+
 def read_profile(path):
-    data = json.loads(path.read_text())
-    if not isinstance(data, dict) or set(data) != set(FIELDS):
-        raise ValueError(f'Профиль повреждён: {path.name} не содержит конфигурацию из пяти полей')
-    return data
+    return _profile_from_bytes(path.read_bytes(), path.name)
 
 
 def profile_entries(ctx):
@@ -244,13 +266,156 @@ def profile_op(ctx, action, name):
         os.unlink(path)
 
 
-def _admin_locked(ctx, action, value=None):
+def _read_file_state(path):
+    """(status, bytes) with status ok/absent/error; absence is a normal state."""
+    try:
+        return 'ok', path.read_bytes()
+    except FileNotFoundError:
+        return 'absent', None
+    except OSError:
+        return 'error', None
+
+
+def _config_from_bytes(ctx, data):
+    result = {}
+    for line in data.decode('utf-8').splitlines():
+        key, sep, value = line.partition('=')
+        if sep and key in FIELDS:
+            result[key] = value.strip()
+    result.setdefault('firewall_backend', 'auto')
+    return validate(ctx, result)
+
+
+def snapshot(ctx):
+    """Read-only view of the backend plus an opaque revision string.
+
+    The revision hashes the backend identity (root/unit) and the exact bytes
+    of conf.env, known-good.json, previous.json and every valid named
+    profile; absent files and directories are represented explicitly and are
+    a normal, fully readable state. Lock contents, temporary files, mtimes
+    and systemd's volatile state are not part of it. Each file is read once
+    for both its data and its revision bytes, and symlinks are never opened
+    in place of the profiles dir or a named profile. Reading needs no root
+    and changes no files.
+
+    When some bytes cannot be read or the configuration is invalid, the
+    snapshot is not safe to compare against: `revision` is then None and
+    `revision_error` names the cause, while config_error/profiles_error and
+    per-profile errors keep their details. A corrupt but readable named
+    profile still yields a valid revision (its bytes are known, so it can be
+    deleted or replaced).
+    """
+    problems = []
+    hasher = hashlib.sha256()
+
+    def feed(label, status, content):
+        hasher.update(label.encode('utf-8') + b'\0')
+        if status == 'ok':
+            hasher.update(b'bytes\0' + str(len(content)).encode('ascii') + b'\0' + content)
+        else:
+            hasher.update(status.encode('ascii') + b'\0')
+
+    def read_once(label, path):
+        status, data = _read_file_state(path)
+        feed(label, status, data)
+        return status, data
+
+    result = {'root': str(ctx.root), 'unit': ctx.unit, 'revision': None, 'revision_error': None,
+              'config': None, 'config_error': None, 'service_state': 'unknown',
+              'autostart': 'unknown', 'profiles': [], 'profiles_error': None}
+
+    feed('backend-root', 'ok', str(ctx.root).encode('utf-8'))
+    feed('unit', 'ok', ctx.unit.encode('utf-8'))
+
+    status, data = read_once('conf.env', ctx.root / 'conf.env')
+    if status == 'ok':
+        try:
+            result['config'] = _config_from_bytes(ctx, data)
+        except (ValueError, OSError) as e:
+            result['config_error'] = str(e)
+            problems.append(f'конфигурация не прошла проверку: {e}')
+    elif status == 'absent':
+        result['config_error'] = f'Не найден конфиг адаптера: {ctx.root / "conf.env"}'
+        problems.append(f'отсутствует {ctx.root / "conf.env"}')
+    else:
+        result['config_error'] = f'Не удалось прочитать: {ctx.root / "conf.env"}'
+        problems.append(f'не удалось прочитать {ctx.root / "conf.env"}')
+
+    for label, path in (('known-good.json', ctx.known), ('previous.json', ctx.state / 'previous.json')):
+        if read_once(label, path)[0] == 'error':
+            problems.append(f'не удалось прочитать {path}')
+
+    d = profiles_dir(ctx)
+    if d.is_symlink():
+        feed('profiles-dir', 'symlink', None)
+        result['profiles_error'] = 'Каталог профилей не может быть символической ссылкой'
+        problems.append(f'{d} — символическая ссылка')
+    elif d.is_dir():
+        feed('profiles-dir', 'ok', b'dir')
+        try:
+            entries = sorted(d.iterdir())
+        except OSError as e:
+            entries = None
+            result['profiles_error'] = f'Не удалось перечислить {d}: {e}'
+            problems.append(f'не удалось перечислить {d}: {e}')
+        if entries is not None:
+            for p in entries:
+                m = re.fullmatch(f'({PROFILE_NAME})\\.json', p.name)
+                if not m:
+                    continue
+                name = m.group(1)
+                if p.is_symlink():
+                    feed(f'profile:{name}', 'symlink', None)
+                    result['profiles'].append({'name': name, 'config': None,
+                                               'error': 'Файл профиля не может быть символической ссылкой'})
+                    problems.append(f'профиль {name} — символическая ссылка')
+                    continue
+                if not p.is_file():
+                    continue
+                pstatus, pdata = _read_file_state(p)
+                feed(f'profile:{name}', pstatus, pdata)
+                entry = {'name': name, 'config': None, 'error': None}
+                if pstatus == 'ok':
+                    try:
+                        entry['config'] = _profile_from_bytes(pdata, name)
+                    except (ValueError, OSError) as e:
+                        entry['error'] = str(e)
+                else:
+                    entry['error'] = f'Не удалось прочитать профиль: {name}'
+                    problems.append(f'не удалось прочитать профиль {name}')
+                result['profiles'].append(entry)
+    elif d.exists():
+        feed('profiles-dir', 'other', None)
+        result['profiles_error'] = f'{d} должен быть каталогом профилей'
+        problems.append(f'{d} должен быть каталогом профилей')
+    else:
+        feed('profiles-dir', 'absent', None)
+
+    result['service_state'] = command(['systemctl', 'is-active', ctx.unit]).stdout.strip() or 'unknown'
+    result['autostart'] = command(['systemctl', 'is-enabled', ctx.unit]).stdout.strip() or 'unknown'
+    if problems:
+        # Bytes were not fully read, so no comparison against them is safe.
+        result['revision_error'] = 'Состояние прочитано не полностью: ' + '; '.join(problems)
+    else:
+        result['revision'] = hasher.hexdigest()
+    return result
+
+
+def _admin_locked(ctx, action, value=None, expected_revision=None):
     """Dispatch trusted to run only under the shared lock; all checks re-run here."""
     trusted(ctx.root)
     trusted(ctx.root / 'conf.env')
     trusted(ctx.root / 'nfqws')
     for path in ctx.root.rglob('*.sh'):
         trusted(path)
+    if expected_revision is not None and action in REVISION_ACTIONS:
+        snap = snapshot(ctx)
+        if snap['revision'] is None:
+            # Never compare error markers and never report this as a conflict:
+            # the state could not be read fully enough for a safe comparison.
+            raise RuntimeError(f'Мутация отклонена: {snap["revision_error"]}')
+        if snap['revision'] != expected_revision:
+            raise ConflictError('Данные изменились с момента чтения. Обнови состояние и подтверди действие заново.')
     if action in ('start', 'stop', 'restart', 'enable', 'disable'):
         systemctl(ctx, action)
     elif action == 'strategy':
@@ -276,13 +441,16 @@ def _admin_locked(ctx, action, value=None):
         raise ValueError('Неизвестное действие')
 
 
-def admin_command(ctx, action, value=None):
+def admin_command(ctx, action, value=None, expected_revision=None):
     """Single entry point for administrative changes from any interface.
 
     Checks root, keeps the read-only runtime action lock-free and serializes
     every mutation (check, write, restart, rollback) with the shared
     STATE/.lock flock; refuses without blocking when the lock is busy.
-    Returns data for read-only actions, None for mutations.
+    With expected_revision set for a file-changing action the revision is
+    recomputed under the lock after the trust checks and before any write;
+    a mismatch raises ConflictError and nothing is changed. Returns data
+    for read-only actions, None for mutations.
     """
     if os.geteuid() != 0:
         raise RuntimeError('Для системного изменения требуются права администратора')
@@ -295,5 +463,5 @@ def admin_command(ctx, action, value=None):
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise RuntimeError('Другое изменение уже выполняется. Попробуй ещё раз после его завершения.')
-        _admin_locked(ctx, action, value)
+            raise BusyError('Другое изменение уже выполняется. Попробуй ещё раз после его завершения.')
+        _admin_locked(ctx, action, value, expected_revision)
