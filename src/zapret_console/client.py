@@ -167,3 +167,25 @@ def journal(context=None):
     from .diagnostics import journal_snapshot
     ctx = context if context is not None else core.BackendContext.from_settings()
     return journal_snapshot(ctx)
+
+
+class Backend:
+    """UI-free adapter used by both frontends; keeps one transport contract."""
+    def __init__(self, mode='terminal'):
+        self.mode = mode
+        self.requires_terminal = mode == 'terminal'
+
+    def snapshot(self):
+        return snapshot()
+
+    def strategies(self):
+        return core.strategies(core.BackendContext.from_settings())
+
+    def request(self, action, value=None, expected_revision=None):
+        return request(make_request(action, value, expected_revision), mode=self.mode)
+
+    def diagnose(self, privileged=False, progress=None):
+        return diagnose(mode=self.mode, privileged=privileged, progress=progress)
+
+    def journal(self):
+        return journal()

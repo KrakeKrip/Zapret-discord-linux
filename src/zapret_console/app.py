@@ -275,10 +275,12 @@ def main():
     parser.add_argument('--diagnose', action='store_true')
     parser.add_argument('--doctor', action='store_true', help='Проверить зависимости и подключение адаптера')
     parser.add_argument('--gui', action='store_true', help='Открыть графическое окно (нужен пакет zapret-console[gui])')
+    parser.add_argument('--tui', action='store_true', help='Открыть терминальное приложение Textual')
+    parser.add_argument('--legacy-menu', action='store_true', help='Открыть прежнее whiptail-меню')
     parser.add_argument('--request-json', help=argparse.SUPPRESS, metavar='JSON')
     args = parser.parse_args()
     if args.request_json is not None:
-        if args.admin or args.status or args.diagnose or args.doctor or args.json or args.gui:
+        if args.admin or args.status or args.diagnose or args.doctor or args.json or args.gui or args.tui or args.legacy_menu:
             payload, code = _response(False, 'invalid_request', '--request-json не совмещается с другими режимами'), 1
         else:
             try:
@@ -287,6 +289,10 @@ def main():
                 payload, code = _response(False, 'operation_failed', f'Внутренняя ошибка: {e}'), 1
         print(json.dumps(payload, ensure_ascii=False))
         raise SystemExit(code)
+    if args.tui and (args.gui or args.legacy_menu or args.admin or args.status or args.diagnose or args.doctor or args.json):
+        parser.error("--tui не совмещается с другими режимами")
+    if args.legacy_menu and (args.gui or args.admin or args.status or args.diagnose or args.doctor or args.json):
+        parser.error("--legacy-menu не совмещается с другими режимами")
     if args.gui:
         if args.admin or args.status or args.diagnose or args.doctor or args.json:
             parser.error('--gui не совмещается с другими режимами')
@@ -318,6 +324,12 @@ def main():
     if args.diagnose:
         print(diagnose(ctx))
         return
+    if not args.legacy_menu:
+        try:
+            from .tui.app import run_tui
+        except ImportError:
+            raise RuntimeError('TUI-модули пока доступны из исходников; прежнее меню: --legacy-menu')
+        raise SystemExit(run_tui())
     if not sys.stdin.isatty():
         raise RuntimeError('Запусти zapret-console в терминале; для скриптов есть --status и --diagnose')
     errors = core.preflight(ctx)

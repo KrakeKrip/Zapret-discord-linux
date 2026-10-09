@@ -184,27 +184,11 @@ class StrategiesModel(QAbstractListModel):
             self.countChanged.emit()
 
 
-class RealBackend:
-    """Adapter for the shared layer used by the real application."""
+class RealBackend(client.Backend):
+    """GUI-compatible name for the shared UI-free adapter."""
 
-    def __init__(self, mode='gui'):
-        self.mode = mode
-
-    def snapshot(self):
-        return client.snapshot()
-
-    def strategies(self):
-        return core.strategies(core.BackendContext.from_settings())
-
-    def diagnose(self, privileged=False, progress=None):
-        return client.diagnose(mode=self.mode, privileged=privileged, progress=progress)
-
-    def journal(self):
-        return client.journal()
-
-    def request(self, action, value=None, expected_revision=None):
-        body = client.make_request(action, value, expected_revision)
-        return client.request(body, mode=self.mode)
+    def __init__(self, mode="gui"):
+        super().__init__(mode=mode)
 
 
 STATE_TEXT = {'active': 'Сервис работает', 'activating': 'Запускается', 'deactivating': 'Останавливается',

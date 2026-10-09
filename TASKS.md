@@ -11,7 +11,7 @@
 | [TASK-004](tasks/TASK-004.md) | Принят Codex | TASK-003 | Correction 01 закрыт; 136 тестов OK, чистый headless QML-прогон. Функциональная основа GUI принята; reports/TASK-004-review-final.md. Визуальный дизайн готовит Codex |
 | [TASK-004D](tasks/TASK-004D.md) | Завершён Codex | TASK-004 | Дизайн перенесён в QML; замечания Correction 01 исправлены Codex по просьбе пользователя, 146 тестов OK, Qt stderr чистый; reports/TASK-004D-codex-report.md |
 | [TASK-004B](tasks/TASK-004B.md) | Завершён Codex | TASK-004D | Общие диагностика/журнал, GUI вне потока интерфейса, явная авторизация расширенного чтения; reports/TASK-004B-report.md |
-| TASK-005 | Запланирован, TASK не выдан | TASK-004B | Textual и совместная работа двух интерфейсов |
+| [TASK-005](tasks/TASK-005.md) | Завершён Codex | TASK-004B | Textual и совместная работа с GUI, общий client.Backend; reports/TASK-005-report.md |
 | TASK-006 | Запланирован, TASK не выдан | TASK-005 | Установка зависимостей, desktop-ярлык и системная проверка |
 
 ## Отдельные наблюдения вне TASK-001

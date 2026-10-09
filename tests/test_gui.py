@@ -856,6 +856,8 @@ class PackageDataTests(unittest.TestCase):
             import zipfile
             with zipfile.ZipFile(wheels[0]) as wheel:
                 names = wheel.namelist()
+            for module in ('__init__.py', 'app.py', 'ui.py'):
+                self.assertIn(f'zapret_console/tui/{module}', names)
             for resource in ('Main.qml', 'Theme.qml', 'GuiIcon.qml', 'AppButton.qml', 'qmldir'):
                 self.assertIn(f'zapret_console/gui/qml/{resource}', names)
 

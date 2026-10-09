@@ -417,7 +417,7 @@ class SavedProfileMenuWiringTests(ProfileTestBase):
              patch.object(app, 'load_context', return_value=self.ctx), \
              patch.object(core, 'preflight', return_value=[]), \
              patch.object(core, 'active', return_value=False), \
-             patch.object(app.sys, 'argv', ['zapret-console']), \
+             patch.object(app.sys, 'argv', ['zapret-console', '--legacy-menu']), \
              patch.object(app.sys.stdin, 'isatty', return_value=True):
             app.main()
         self.assertIn('good', captured[0])

@@ -17,6 +17,7 @@ zapret-console = "zapret_console.app:entrypoint"
 
 [project.optional-dependencies]
 gui = ["PySide6==6.12.0"]
+tui = ["textual==8.2.8"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
