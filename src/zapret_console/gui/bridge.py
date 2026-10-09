@@ -114,10 +114,23 @@ class ProfilesModel(QAbstractListModel):
                 ProfilesModel.ErrorRole: b'error'}
 
     def set_rows(self, rows):
-        self.beginResetModel()
-        self._rows = rows
-        self.endResetModel()
-        self.countChanged.emit()
+        if rows == self._rows:
+            return
+        old_count = len(self._rows)
+        common = min(old_count, len(rows))
+        if common:
+            self._rows[:common] = rows[:common]
+            self.dataChanged.emit(self.index(0), self.index(common - 1), list(self.roleNames()))
+        if len(rows) < old_count:
+            self.beginRemoveRows(QModelIndex(), len(rows), old_count - 1)
+            del self._rows[len(rows):]
+            self.endRemoveRows()
+        elif len(rows) > old_count:
+            self.beginInsertRows(QModelIndex(), old_count, len(rows) - 1)
+            self._rows.extend(rows[old_count:])
+            self.endInsertRows()
+        if len(rows) != old_count:
+            self.countChanged.emit()
 
 
 class StrategiesModel(QAbstractListModel):
@@ -152,10 +165,23 @@ class StrategiesModel(QAbstractListModel):
                 StrategiesModel.CurrentRole: b'current'}
 
     def set_rows(self, rows):
-        self.beginResetModel()
-        self._rows = rows
-        self.endResetModel()
-        self.countChanged.emit()
+        if rows == self._rows:
+            return
+        old_count = len(self._rows)
+        common = min(old_count, len(rows))
+        if common:
+            self._rows[:common] = rows[:common]
+            self.dataChanged.emit(self.index(0), self.index(common - 1), list(self.roleNames()))
+        if len(rows) < old_count:
+            self.beginRemoveRows(QModelIndex(), len(rows), old_count - 1)
+            del self._rows[len(rows):]
+            self.endRemoveRows()
+        elif len(rows) > old_count:
+            self.beginInsertRows(QModelIndex(), old_count, len(rows) - 1)
+            self._rows.extend(rows[old_count:])
+            self.endInsertRows()
+        if len(rows) != old_count:
+            self.countChanged.emit()
 
 
 class RealBackend:
@@ -175,10 +201,13 @@ class RealBackend:
         return client.request(body, mode=self.mode)
 
 
-STATE_TEXT = {'active': 'Работает', 'activating': 'Запускается', 'deactivating': 'Останавливается',
-              'inactive': 'Остановлен', 'failed': 'Сбой', 'reloading': 'Перезагружается',
-              'maintenance': 'Обслуживание', 'unknown': 'Неизвестно'}
+STATE_TEXT = {'active': 'Сервис работает', 'activating': 'Запускается', 'deactivating': 'Останавливается',
+              'inactive': 'Сервис остановлен', 'failed': 'Сбой сервиса', 'reloading': 'Перезагрузка',
+              'maintenance': 'Обслуживание', 'unknown': 'Состояние неизвестно'}
 STATE_TONE = {'active': 'ok', 'failed': 'error', 'unknown': 'warn'}
+STATE_CHIP = {'active': 'Запущен', 'activating': 'Запускается', 'deactivating': 'Останавливается',
+              'inactive': 'Остановлен', 'failed': 'Сбой', 'reloading': 'Перезагрузка',
+              'maintenance': 'Обслуживание', 'unknown': 'Неизвестно'}
 AUTOSTART_TEXT = {'enabled': 'Включён', 'disabled': 'Выключен', 'static': 'Статический',
                   'linked': 'Подключён', 'masked': 'Замаскирован', 'unknown': 'Неизвестно'}
 
@@ -188,9 +217,6 @@ def _describe_result(result):
     message = str(result.get('message') or '')
     if code == 'busy':
         return ('Занято', 'Другое изменение уже выполняется. Дождись его завершения и повтори действие.')
-    if code == 'conflict':
-        return ('Данные изменились',
-                'Состояние изменилось с момента подтверждения. Данные обновлены — проверь их и подтверди действие заново.')
     if code == 'auth_cancelled':
         return ('Авторизация отменена', 'Операция не выполнена: запрос пароля отменён.')
     if code == 'auth_failed':
@@ -212,6 +238,7 @@ class BackendBridge(QObject):
     busyChanged = Signal()
     closingChanged = Signal()
     revisionChanged = Signal()
+    loadingChanged = Signal()
     messageRaised = Signal(str, str)
     operationStarted = Signal(str)
     snapshotReady = Signal(int, object, object)
@@ -233,8 +260,12 @@ class BackendBridge(QObject):
         self._timer.timeout.connect(self.refresh)
         self._snapshot_generation = 0
         self._snapshot_pending = False
-        self._refresh_manual = False
+        self._loading = True
+        self._event_tone = 'muted'
+        self._strategy_installed = False
         self._first_snapshot_done = False
+        self._manual_refresh = False
+        self._read_problem = False
         self._busy = False
         self._busy_text = ''
         self._closing = False
@@ -242,6 +273,7 @@ class BackendBridge(QObject):
         self._service_state = 'unknown'
         self._service_text = STATE_TEXT['unknown']
         self._service_tone = 'warn'
+        self._service_chip = STATE_CHIP['unknown']
         self._autostart_text = AUTOSTART_TEXT['unknown']
         self._autostart_tone = 'warn'
         self._autostart_active = False
@@ -250,7 +282,7 @@ class BackendBridge(QObject):
         self._shown_revision = None
         self._revision_error = ''
         self._config_error = ''
-        self._last_event = 'Чтение состояния…'
+        self._last_event = 'Читаем состояние…'
         self._strategy_filter = ''
         self._strategy_all = []
         self._strategy_current = ''
@@ -281,6 +313,22 @@ class BackendBridge(QObject):
     def get_autostart_active(self):
         return self._autostart_active
     autostartActive = Property(bool, get_autostart_active, notify=autostartChanged)
+
+    def get_service_chip(self):
+        return self._service_chip
+    serviceChip = Property(str, get_service_chip, notify=serviceStateChanged)
+
+    def get_loading(self):
+        return self._loading
+    loading = Property(bool, get_loading, notify=loadingChanged)
+
+    def get_event_tone(self):
+        return self._event_tone
+    eventTone = Property(str, get_event_tone, notify=lastEventChanged)
+
+    def get_strategy_installed(self):
+        return self._strategy_installed
+    strategyInstalled = Property(bool, get_strategy_installed, notify=connectionChanged)
 
     def get_interface(self):
         return self._interface
@@ -357,7 +405,7 @@ class BackendBridge(QObject):
         if not self._closing:
             self._closing = True
             self._timer.stop()
-            self._set_last_event('Закрытие: ожидание завершения операции…')
+            self._set_last_event('Закрытие: ожидание завершения операции…', 'muted')
             self.closingChanged.emit()
             self._worker.begin_shutdown()
             if not self._worker.isRunning():
@@ -368,7 +416,9 @@ class BackendBridge(QObject):
     # -- reads ------------------------------------------------------------
     @Slot()
     def refreshManual(self):
-        self._refresh_manual = True
+        if self._closing:
+            return
+        self._manual_refresh = True
         self.refresh()
 
     @Slot()
@@ -396,16 +446,21 @@ class BackendBridge(QObject):
         if generation != self._snapshot_generation:
             return
         self._snapshot_pending = False
-        first_snapshot = not self._first_snapshot_done
+        self._loading = False
+        self.loadingChanged.emit()
+        # Polling updates state, not the user's last operation result. A read
+        # problem takes priority; recovery and explicit refresh are new events.
+        if snap.get('revision') is None:
+            self._set_last_event('Состояние прочитано не полностью.', 'warn')
+        elif not self._first_snapshot_done or self._manual_refresh or self._read_problem:
+            self._set_last_event('Настройки прочитаны.', 'accent')
         self._first_snapshot_done = True
-        if self._refresh_manual:
-            self._refresh_manual = False
-            self._set_last_event('Состояние обновлено.')
-        elif first_snapshot:
-            self._set_last_event('')
+        self._manual_refresh = False
+        self._read_problem = snap.get('revision') is None
         self._service_state = str(snap.get('service_state') or 'unknown')
         self._service_text = STATE_TEXT.get(self._service_state, self._service_state)
         self._service_tone = STATE_TONE.get(self._service_state, 'warn')
+        self._service_chip = STATE_CHIP.get(self._service_state, self._service_state)
         self._autostart_text = AUTOSTART_TEXT.get(str(snap.get('autostart') or 'unknown'), 'Неизвестно')
         self._autostart_tone = 'warn' if self._autostart_text == 'Неизвестно' else 'ok'
         self._autostart_active = str(snap.get('autostart') or '') == 'enabled'
@@ -413,6 +468,7 @@ class BackendBridge(QObject):
         self._interface = config['interface'] if config else '—'
         self._strategy = config['strategy'] if config else '—'
         self._strategy_current = config['strategy'] if config else ''
+        self._strategy_installed = bool(self._strategy_current) and self._strategy_current in (strategies or [])
         self._shown_revision = snap.get('revision')
         self._revision_error = snap.get('revision_error') or ''
         self._config_error = snap.get('config_error') or ''
@@ -440,17 +496,24 @@ class BackendBridge(QObject):
         if generation != self._snapshot_generation:
             return
         self._snapshot_pending = False
+        self._loading = False
+        self.loadingChanged.emit()
         self._service_state = 'unknown'
-        self._service_text = 'Неизвестно'
+        self._service_text = STATE_TEXT['unknown']
         self._service_tone = 'warn'
+        self._service_chip = STATE_CHIP['unknown']
         self._autostart_text = 'Неизвестно'
         self._autostart_tone = 'warn'
         self._autostart_active = False
         self._shown_revision = None
+        self._strategy_installed = False
         self.serviceStateChanged.emit()
         self.autostartChanged.emit()
+        self.connectionChanged.emit()
         self.revisionChanged.emit()
-        self._set_last_event(f'Состояние недоступно: {message}')
+        self._manual_refresh = False
+        self._read_problem = True
+        self._set_last_event(f'Состояние недоступно: {message}', 'error')
         self.messageRaised.emit('Состояние недоступно',
                                 f'Не удалось прочитать состояние: {message}')
 
@@ -544,16 +607,16 @@ class BackendBridge(QObject):
         ok = bool(result.get('ok'))
         code = result.get('code')
         if ok:
-            self._set_last_event('Готово.')
+            self._set_last_event('Готово.', 'ok')
         elif code == 'conflict':
-            self._set_last_event('Конфликт: данные изменились, операция не повторена.')
+            self._set_last_event('Настройки изменились в другом окне; операция не повторена.', 'warn')
             if not self._closing:
-                self.messageRaised.emit('Данные изменились',
-                                        'Состояние изменилось с момента подтверждения, операция не выполнена. '
-                                        'Данные обновлены — проверь их и подтверди действие заново.')
+                self.messageRaised.emit('Настройки изменились',
+                                        'Настройки изменились в другом окне. Обновите данные и повторите действие.')
         else:
             title, text = _describe_result(result)
-            self._set_last_event(f'{title}: {text}')
+            self._set_last_event(f'{title}: {text}',
+                                 'muted' if code == 'auth_cancelled' else 'warn' if code == 'busy' else 'error')
             if not self._closing:
                 self.messageRaised.emit(title, text)
         # при закрытии quit придёт от worker.finished — сначала завершится поток
@@ -561,7 +624,7 @@ class BackendBridge(QObject):
             self.refresh()
 
     def _on_worker_failed(self, message):
-        self._set_last_event(message)
+        self._set_last_event(message, 'error')
         if not self._closing:
             self.messageRaised.emit('Ошибка', message)
 
@@ -576,6 +639,7 @@ class BackendBridge(QObject):
             from PySide6.QtCore import QCoreApplication
             QCoreApplication.quit()
 
-    def _set_last_event(self, text):
+    def _set_last_event(self, text, tone='muted'):
         self._last_event = text
+        self._event_tone = tone
         self.lastEventChanged.emit()

@@ -21,7 +21,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from zapret_console import core  # noqa: E402
 
 try:
-    from PySide6.QtCore import QCoreApplication, QMetaObject, QObject, QUrl
+    from PySide6.QtCore import QCoreApplication, QMetaObject, QObject, QUrl, Qt, QtMsgType, qInstallMessageHandler
+    from PySide6.QtQuick import QQuickItem, QQuickWindow
+    from PySide6.QtTest import QTest
     from PySide6.QtGui import QGuiApplication
     from PySide6.QtQml import QQmlApplicationEngine
     HAVE_PYSIDE = True
@@ -111,17 +113,54 @@ class BridgeTests(unittest.TestCase):
         self.assertTrue(wait_until(lambda: not self.bridge.busy))
 
     def test_refresh_applies_real_snapshot_and_strategies(self):
+        self.assertTrue(self.bridge.loading)
         self.bridge.refresh()
-        self.assertTrue(wait_until(lambda: self.bridge.serviceText == 'Работает'))
+        self.assertTrue(wait_until(lambda: self.bridge.serviceText == 'Сервис работает'))
+        self.assertFalse(self.bridge.loading)
+        self.assertEqual(self.bridge.eventTone, 'accent')
         self.assertEqual(self.bridge.serviceTone, 'ok')
         self.assertTrue(self.bridge.serviceRunning)
         self.assertEqual(self.bridge.autostartText, 'Включён')
         self.assertEqual(self.bridge.interfaceName, 'any')
         self.assertEqual(self.bridge.strategy, 'general_alt11.bat')
+        self.assertTrue(self.bridge.strategyInstalled)
         self.assertTrue(self.bridge.canMutateFiles)
         self.assertEqual(self.bridge.revision, 'a' * 64)
         self.assertEqual(self.bridge.profiles.rowCount(), 2)
         self.assertEqual(self.bridge.strategies.rowCount(), 3)
+
+    def test_strategy_not_installed_is_reported(self):
+        self.backend.strategy_names = ['general.bat']
+        self.bridge.refresh()
+        self.assertTrue(wait_until(lambda: not self.bridge.loading))
+        self.assertFalse(self.bridge.strategyInstalled)
+        self.assertEqual(self.bridge.strategy, 'general_alt11.bat')
+
+    def test_operation_event_survives_poll_and_post_operation_refresh(self):
+        self.bridge.refresh()
+        self.assertTrue(wait_until(lambda: self.bridge.canMutateFiles))
+        for code, tone in [('ok', 'ok'), ('conflict', 'warn'),
+                           ('auth_cancelled', 'muted'), ('operation_failed', 'error')]:
+            with self.subTest(code=code):
+                self.backend.request_results = [{'ok': code == 'ok', 'code': code, 'message': 'failed'}]
+                before = len(self.backend.requests)
+                self.bridge.stopService()
+                self.assertTrue(wait_until(lambda: not self.bridge.busy and not self.bridge._snapshot_pending))
+                event = self.bridge.lastEvent
+                self.assertEqual(self.bridge.eventTone, tone)
+                self.bridge.refresh()
+                self.assertTrue(wait_until(lambda: not self.bridge._snapshot_pending))
+                self.assertEqual(self.bridge.lastEvent, event)
+                self.assertEqual(self.bridge.eventTone, tone)
+                self.assertEqual(len(self.backend.requests), before + 1)
+        self.bridge.refreshManual()
+        self.assertTrue(wait_until(lambda: not self.bridge._snapshot_pending))
+        self.assertEqual(self.bridge.lastEvent, 'Настройки прочитаны.')
+        self.backend.snapshot_error = 'read failure'
+        self.bridge.refresh()
+        self.assertTrue(wait_until(lambda: not self.bridge._snapshot_pending))
+        self.assertEqual(self.bridge.eventTone, 'error')
+        self.assertIn('read failure', self.bridge.lastEvent)
 
     def test_service_state_unknown_and_files_disabled_on_read_error(self):
         self.backend.snapshot_error = 'нет доступа'
@@ -129,7 +168,7 @@ class BridgeTests(unittest.TestCase):
         # 'Неизвестно' совпадает с начальным состоянием, ждём признак завершения чтения
         self.assertTrue(wait_until(lambda: self.bridge.lastEvent.startswith('Состояние недоступно')))
         self.assertIn('нет доступа', self.bridge.lastEvent)
-        self.assertEqual(self.bridge.serviceText, 'Неизвестно')
+        self.assertEqual(self.bridge.serviceText, 'Состояние неизвестно')
         self.assertEqual(self.bridge.serviceTone, 'warn')
         self.assertFalse(self.bridge.canMutateFiles)
         self.assertEqual(self.bridge.revision, '')
@@ -147,11 +186,11 @@ class BridgeTests(unittest.TestCase):
 
     def test_generation_guard_drops_stale_reply(self):
         self.bridge.refresh()
-        self.assertTrue(wait_until(lambda: self.bridge.serviceText == 'Работает'))
+        self.assertTrue(wait_until(lambda: self.bridge.serviceText == 'Сервис работает'))
         self.bridge._snapshot_generation = 7  # newer generation in flight
         stale = dict(SAMPLE, service_state='failed', revision='e' * 64)
         self.bridge._on_snapshot_ready(1, stale, [])
-        self.assertEqual(self.bridge.serviceText, 'Работает')
+        self.assertEqual(self.bridge.serviceText, 'Сервис работает')
         self.assertEqual(self.bridge.revision, 'a' * 64)
 
     def test_two_clients_conflict_shown_and_not_retried(self):
@@ -164,7 +203,7 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(len(self.backend.requests), 1)
         self.assertEqual(self.backend.requests[0],
                          {'action': 'profile-delete', 'value': 'home', 'revision': 'a' * 64})
-        self.assertTrue(any(title == 'Данные изменились' for title, _ in self.messages))
+        self.assertTrue(any(title == 'Настройки изменились' for title, _ in self.messages))
         # refresh после результата выполняется, но повторного запроса нет
         self.assertTrue(wait_until(lambda: not self.bridge.busy))
         time.sleep(0.05)
@@ -279,7 +318,7 @@ class BridgeTests(unittest.TestCase):
         finally:
             gate.set()
         self.assertTrue(wait_until(lambda: self.quit_calls == [1]))
-        self.assertEqual(self.bridge.serviceText, 'Работает')
+        self.assertEqual(self.bridge.serviceText, 'Сервис работает')
         self.assertFalse(self.bridge._worker.isRunning())
 
     def test_operation_failure_shown_via_message(self):
@@ -337,6 +376,15 @@ class QmlWindowTests(unittest.TestCase):
         self.backend = FakeBackend()
         self.quit_calls = []
         self.warnings = []
+        self.qt_warnings = []
+        def capture_qt(kind, context, message):
+            if kind in (QtMsgType.QtWarningMsg, QtMsgType.QtCriticalMsg, QtMsgType.QtFatalMsg):
+                self.qt_warnings.append(message)
+            if self.previous_qt_handler is not None:
+                self.previous_qt_handler(kind, context, message)
+            else:
+                print(message, file=sys.stderr)
+        self.previous_qt_handler = qInstallMessageHandler(capture_qt)
         self.engine = QQmlApplicationEngine()
         self.engine.warnings.connect(self.warnings.extend)
         self.bridge = BackendBridge(backend=self.backend,
@@ -351,6 +399,8 @@ class QmlWindowTests(unittest.TestCase):
         self.bridge.stop()
         del self.engine
         QCoreApplication.processEvents()
+        qInstallMessageHandler(self.previous_qt_handler)
+        self.assertEqual(self.qt_warnings, [], "Qt warnings: " + "\n".join(self.qt_warnings))
 
     def find(self, object_name):
         return self.window.findChild(QObject, object_name)
@@ -452,6 +502,162 @@ class QmlWindowTests(unittest.TestCase):
                          [{'action': 'profile-save', 'value': 'mobile', 'revision': 'a' * 64}])
         self.assert_no_qml_warnings()
 
+    def test_select_strategy_button_switches_tab_without_mutation(self):
+        select = self.find('selectStrategyButton')
+        nav = self.find('navStrategies')
+        self.assertIsNotNone(select)
+        self.assertIsNotNone(nav)
+        self.assertFalse(nav.property('checked'))
+        self.assertEqual(self.backend.requests, [])
+        QMetaObject.invokeMethod(select, 'click')
+        QCoreApplication.processEvents()
+        self.assertTrue(nav.property('checked'))
+        self.assertEqual(self.backend.requests, [])  # переход вкладки без мутации
+
+    def test_search_does_not_hide_current_strategy_card(self):
+        self.bridge.refresh()
+        self.assertTrue(wait_until(lambda: self.bridge.canMutateFiles))
+        card = self.find('currentStrategyCard')
+        nav = self.find('navStrategies')
+        QMetaObject.invokeMethod(nav, 'click')
+        self.assertTrue(wait_until(lambda: card.property('visible')))
+        self.bridge.setStrategyFilter('нет-такой-стратегии')
+        self.assertTrue(wait_until(lambda: self.bridge.strategiesModel.count == 0))
+        self.assertTrue(card.property('visible'))  # фильтр не прячет карточку текущей стратегии
+        self.assertEqual(self.bridge.strategy, 'general_alt11.bat')
+
+    def test_narrow_window_uses_narrow_sidebar(self):
+        sidebar = self.find('sidebar')
+        self.assertIsNotNone(sidebar)
+        self.assertEqual(sidebar.property('width'), 208)
+        self.window.setProperty('width', 800)
+        self.assertTrue(wait_until(lambda: sidebar.property('width') == 184))
+        self.assertEqual(self.window.property('minimumWidth'), 800)
+        self.window.setProperty('width', 1040)
+        self.assertTrue(wait_until(lambda: sidebar.property('width') == 208))
+        self.assert_no_qml_warnings()
+
+    def visual_items(self):
+        def walk(item):
+            yield item
+            for child in item.childItems():
+                yield from walk(child)
+        return list(walk(self.window.contentItem()))
+
+    def test_file_buttons_disabled_with_incomplete_snapshot(self):
+        self.bridge.refresh()
+        self.assertTrue(wait_until(lambda: self.bridge.canMutateFiles))
+        self.click('navProfiles')
+        self.bridge._on_snapshot_ready(self.bridge._snapshot_generation,
+                                      dict(SAMPLE, revision=None, revision_error='incomplete'),
+                                      self.backend.strategy_names)
+        QCoreApplication.processEvents()
+        targets = {'saveCurrentButton', 'restoreProfileButton', 'replaceProfileButton', 'deleteProfileButton'}
+        buttons = [item for item in self.visual_items() if item.objectName() in targets]
+        self.assertEqual({item.objectName() for item in buttons}, targets)
+        for item in buttons:
+            self.assertFalse(item.property('enabled'), item.objectName())
+            QMetaObject.invokeMethod(item, 'click')
+        self.assertFalse(self.prop('saveDialog', 'visible'))
+        self.assertFalse(self.prop('replaceDialog', 'visible'))
+        self.assertFalse(self.prop('deleteDialog', 'visible'))
+        self.assertEqual(self.backend.requests, [])
+        self.assertTrue(self.prop('serviceActionButton', 'enabled'))
+
+    def test_open_confirmation_disabled_when_revision_becomes_unavailable(self):
+        self.bridge.refresh()
+        self.assertTrue(wait_until(lambda: self.bridge.canMutateFiles))
+        for dialog_name, accept_name in [('replaceDialog', 'replaceAcceptButton'),
+                                         ('deleteDialog', 'deleteAcceptButton')]:
+            dialog = self.find(dialog_name)
+            dialog.setProperty('baseRevision', 'a' * 64)
+            dialog.setProperty('targetName', 'home')
+            QMetaObject.invokeMethod(dialog, 'open')
+            self.bridge._shown_revision = None
+            self.bridge.revisionChanged.emit()
+            QCoreApplication.processEvents()
+            self.assertFalse(self.prop(accept_name, 'enabled'))
+            self.click(accept_name)
+            self.assertEqual(self.prop(dialog_name, 'baseRevision'), 'a' * 64)
+            self.assertEqual(self.backend.requests, [])
+            QMetaObject.invokeMethod(dialog, 'reject')
+            self.bridge._shown_revision = 'a' * 64
+            self.bridge.revisionChanged.emit()
+
+    def test_mutations_disabled_while_busy_and_closing_but_navigation_works(self):
+        self.bridge.refresh()
+        self.assertTrue(wait_until(lambda: self.bridge.canMutateFiles))
+        self.bridge._busy = True
+        self.bridge.busyChanged.emit()
+        QCoreApplication.processEvents()
+        for name in ['serviceActionButton', 'restartButton', 'autostartButton', 'saveCurrentButton']:
+            self.assertFalse(self.prop(name, 'enabled'), name)
+        self.click('navStrategies')
+        self.assertTrue(self.prop('navStrategies', 'checked'))
+        targets = {'restoreProfileButton', 'restoreProfileCompactButton', 'replaceProfileButton',
+                   'deleteProfileButton', 'applyStrategyButton', 'saveCurrentEmptyButton'}
+        for item in self.visual_items():
+            if item.objectName() in targets:
+                self.assertFalse(item.property('enabled'), item.objectName())
+                QMetaObject.invokeMethod(item, 'click')
+        self.bridge._busy = False
+        self.bridge.busyChanged.emit()
+        self.bridge.requestClose()
+        for name in ['serviceActionButton', 'restartButton', 'autostartButton', 'saveCurrentButton']:
+            self.assertFalse(self.prop(name, 'enabled'), name)
+        self.assertEqual(self.backend.requests, [])
+
+    def test_dialog_keyboard_cancel_focus_and_valid_submit(self):
+        self.bridge.refresh()
+        self.assertTrue(wait_until(lambda: self.bridge.canMutateFiles))
+        self.window.requestActivate()
+        self.find('navMain').forceActiveFocus(Qt.TabFocusReason)
+        QTest.keyClick(self.window, Qt.Key_Tab)
+        self.assertTrue(wait_until(lambda: self.prop('navProfiles', 'visualFocus')))
+        QTest.keyClick(self.window, Qt.Key_Return)
+        self.assertTrue(self.prop('navProfiles', 'checked'))
+        save = self.find('saveDialog')
+        save.setProperty('baseRevision', 'a' * 64)
+        QMetaObject.invokeMethod(save, 'open')
+        self.assertTrue(wait_until(lambda: self.prop('saveNameField', 'activeFocus')))
+        QTest.keyClick(self.window, Qt.Key_Return)
+        QCoreApplication.processEvents()
+        self.assertEqual(self.backend.requests, [])
+        QTest.keyClick(self.window, Qt.Key_Escape)
+        self.assertTrue(wait_until(lambda: not self.prop('saveDialog', 'visible')))
+        for dialog, cancel in [('replaceDialog', 'replaceCancelButton'), ('deleteDialog', 'deleteCancelButton')]:
+            obj = self.find(dialog)
+            obj.setProperty('targetName', 'home')
+            obj.setProperty('baseRevision', 'a' * 64)
+            QMetaObject.invokeMethod(obj, 'open')
+            self.assertTrue(wait_until(lambda: self.prop(cancel, 'activeFocus')))
+            QTest.keyClick(self.window, Qt.Key_Return)
+            self.assertTrue(wait_until(lambda: not self.prop(dialog, 'visible')))
+            self.assertEqual(self.backend.requests, [])
+        QMetaObject.invokeMethod(save, 'open')
+        self.assertTrue(wait_until(lambda: self.prop('saveNameField', 'activeFocus')))
+        self.find('saveNameField').setProperty('text', 'mobile')
+        QTest.keyClick(self.window, Qt.Key_Return)
+        self.assertTrue(wait_until(lambda: len(self.backend.requests) == 1 and not self.bridge.busy))
+        self.assertEqual(self.backend.requests[0]['revision'], 'a' * 64)
+        self.assertEqual(self.backend.requests[0]['action'], 'profile-save')
+
+    def test_button_text_fits_and_wide_cards_align(self):
+        self.bridge.refresh()
+        self.assertTrue(wait_until(lambda: self.bridge.canMutateFiles))
+        self.click('navProfiles')
+        QCoreApplication.processEvents()
+        button = self.find('saveCurrentButton')
+        label = button.property('contentItem')
+        self.assertGreaterEqual(button.property('width') - button.property('leftPadding')
+                                - button.property('rightPadding'), label.property('implicitWidth'))
+        self.click('navMain')
+        QCoreApplication.processEvents()
+        left, right = self.find('connectionCard'), self.find('autostartCard')
+        self.assertAlmostEqual(left.property('y'), right.property('y'), delta=1)
+        self.assertGreater(left.property('width'), right.property('width'))
+        self.assert_no_qml_warnings()
+
     def test_dialog_cancellations_send_nothing(self):
         self.bridge.refresh()
         self.assertTrue(wait_until(lambda: self.bridge.canMutateFiles))
@@ -551,9 +757,8 @@ class PackageDataTests(unittest.TestCase):
             import zipfile
             with zipfile.ZipFile(wheels[0]) as wheel:
                 names = wheel.namelist()
-            self.assertIn('zapret_console/gui/qml/Main.qml', names)
-            self.assertIn('zapret_console/gui/qml/Theme.qml', names)
-            self.assertIn('zapret_console/gui/qml/qmldir', names)
+            for resource in ('Main.qml', 'Theme.qml', 'GuiIcon.qml', 'AppButton.qml', 'qmldir'):
+                self.assertIn(f'zapret_console/gui/qml/{resource}', names)
 
 
 if __name__ == '__main__':
