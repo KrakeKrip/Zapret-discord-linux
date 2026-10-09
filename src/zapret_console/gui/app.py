@@ -30,7 +30,7 @@ def run_gui():
         return 1
 
     app = QGuiApplication(sys.argv[:1])
-    app.setApplicationName('Zapret Console')
+    app.setApplicationName('Zapret Manager')
     app.setDesktopFileName('zapret-console')
     from PySide6.QtGui import QIcon
     app.setWindowIcon(QIcon.fromTheme('zapret-console'))

@@ -41,7 +41,7 @@ def unit_text(root):
     if not re.fullmatch(r'/[A-Za-z0-9_./-]+', str(root)) or '..' in root.parts:
         raise ValueError('Для установки сервиса используй абсолютный путь без пробелов и специальных символов')
     return f'''[Unit]
-Description=Zapret Console network backend
+Description=Zapret Manager network backend
 After=network-online.target
 Wants=network-online.target
 
@@ -121,7 +121,7 @@ def ensure_dependencies(ui):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Мастер установки Zapret Console')
+    parser = argparse.ArgumentParser(description='Мастер установки Zapret Manager')
     parser.add_argument('--ui', choices=('all', 'tui', 'none'), default='all', help='all: окно и терминал; tui: только терминал; none: только CLI')
     parser.add_argument('--yes', action='store_true', help='Использовать значения по умолчанию без вопросов')
     parser.add_argument('--dry-run', action='store_true', help='Показать план без изменений и загрузок')

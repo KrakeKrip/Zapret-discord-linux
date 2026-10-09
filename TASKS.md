@@ -14,6 +14,8 @@
 | [TASK-005](tasks/TASK-005.md) | Завершён Codex | TASK-004B | Textual и совместная работа с GUI, общий client.Backend; reports/TASK-005-report.md |
 | [TASK-006](tasks/TASK-006.md) | Реализован и проверен в staging; host-установка ждёт sudo | TASK-005 | Полная установка GUI/TUI, два ярлыка, rollback, 193 теста OK; reports/TASK-006-report.md |
 
+| TASK-007 | Завершён Codex; обновление host ждёт sudo | TASK-006 | Zapret Manager: Textual удалён, простое whiptail-меню по умолчанию, 197 тестов OK; reports/TASK-007-report.md |
+
 ## Отдельные наблюдения вне TASK-001
 
 - Текст ошибки меню ссылается на фиксированный `/opt/zapret-discord-youtube-linux/service.sh` даже при другом backend_root. Исправление не включалось в TASK-001; учесть при задачах интерфейсов.

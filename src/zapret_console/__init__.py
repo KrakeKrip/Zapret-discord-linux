@@ -1,2 +1,2 @@
-"""Zapret Console."""
-__version__ = '0.3.0'
+"""Zapret Manager."""
+__version__ = '0.3.1'

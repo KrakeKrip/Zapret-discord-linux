@@ -29,21 +29,6 @@ jobs:
           test ! -e "$RUNNER_TEMP/zapret-stage/usr/local/bin/zapret-console"
           test -f "$RUNNER_TEMP/zapret-stage/etc/zapret-console/settings.json"
 
-  tui:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python: ['3.10', '3.12', '3.14']
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python }}
-      - name: Install Textual frontend
-        run: python -m pip install '.[tui]'
-      - name: Textual pilot and CLI tests
-        run: python -m unittest discover -s tests -p test_tui.py -v
-
   desktop:
     runs-on: ubuntu-latest
     env:
@@ -58,15 +43,15 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y python3-venv desktop-file-utils libegl1 libgl1 libxcb-cursor0 libxkbcommon-x11-0
-      - name: Install both frontends
-        run: python -m pip install '.[gui,tui]'
-      - name: Full GUI and Textual regression tests
+      - name: Install graphical frontend
+        run: python -m pip install '.[gui]'
+      - name: GUI and terminal menu regression tests
         run: python -m unittest discover -s tests -v
       - name: Install real UI dependencies in staging
         run: |
           DESTDIR="$RUNNER_TEMP/zapret-runtime" bash scripts/install.sh --with-deps
           "$RUNNER_TEMP/zapret-runtime/usr/local/bin/zapret-console" --help
           release="$(readlink -f "$RUNNER_TEMP/zapret-runtime/usr/local/lib/zapret-console/current")"
-          "$release/venv/bin/python" -I -c 'import textual; from PySide6.QtQml import QQmlApplicationEngine'
+          "$release/venv/bin/python" -I -c 'from PySide6.QtQml import QQmlApplicationEngine'
           desktop-file-validate "$RUNNER_TEMP/zapret-runtime/usr/local/share/applications/"*.desktop
           DESTDIR="$RUNNER_TEMP/zapret-runtime" bash scripts/uninstall.sh

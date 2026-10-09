@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Zapret Console CLI: whiptail menu, status, diagnostics and user interaction.
+"""Zapret Manager CLI: whiptail menu, status, diagnostics and user interaction.
 
 All adapter operations delegate to zapret_console.core; this module owns
 argument parsing, dialogs, message texts and exit codes.
@@ -16,10 +16,10 @@ import subprocess
 import sys
 import tempfile
 
-from . import core
+from . import core, __version__
 from .core import BackendContext
 
-VERSION = '0.3.0'
+VERSION = __version__
 LAUNCHER = '/usr/local/bin/zapret-console'
 
 VALUE_ACTIONS = frozenset({'strategy', 'interface', 'profile-save', 'profile-replace',
@@ -115,7 +115,7 @@ def dialog(args):
         raise RuntimeError('Увеличь терминал хотя бы до 59 × 18 символов')
     # Leave terminal output attached to the TTY; selection uses a separate FD.
     with tempfile.TemporaryFile(mode='w+') as selection:
-        r = subprocess.run(['whiptail', '--title', 'Zapret Console', '--backtitle',
+        r = subprocess.run(['whiptail', '--title', 'Zapret Manager', '--backtitle',
                             '↑↓ выбор · Enter открыть · Tab кнопки · Esc назад',
                             '--ok-button', 'Готово', '--cancel-button', 'Назад',
                             '--yes-button', 'Да', '--no-button', 'Нет',
@@ -264,7 +264,7 @@ def profiles_menu(ctx):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Zapret Console — управление обходом DPI в Linux')
+    parser = argparse.ArgumentParser(description='Zapret Manager — управление обходом DPI в Linux')
     parser.add_argument('--version', action='version', version=f'%(prog)s {VERSION}')
     parser.add_argument('--admin', help=argparse.SUPPRESS, choices=['start', 'stop', 'restart', 'enable', 'disable',
                                          'strategy', 'interface', 'save-good', 'restore-good', 'restore-previous', 'runtime',
@@ -275,8 +275,8 @@ def main():
     parser.add_argument('--diagnose', action='store_true')
     parser.add_argument('--doctor', action='store_true', help='Проверить зависимости и подключение адаптера')
     parser.add_argument('--gui', action='store_true', help='Открыть графическое окно (нужен пакет zapret-console[gui])')
-    parser.add_argument('--tui', action='store_true', help='Открыть терминальное приложение Textual')
-    parser.add_argument('--legacy-menu', action='store_true', help='Открыть прежнее whiptail-меню')
+    parser.add_argument('--tui', action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument('--legacy-menu', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--request-json', help=argparse.SUPPRESS, metavar='JSON')
     args = parser.parse_args()
     if args.request_json is not None:
@@ -324,9 +324,6 @@ def main():
     if args.diagnose:
         print(diagnose(ctx))
         return
-    if not args.legacy_menu:
-        from .tui.app import run_tui
-        raise SystemExit(run_tui())
     if not sys.stdin.isatty():
         raise RuntimeError('Запусти zapret-console в терминале; для скриптов есть --status и --diagnose')
     errors = core.preflight(ctx)

@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zapret-console"
-version = "0.3.0"
-description = "A Russian terminal interface for managing zapret on Linux"
+version = "0.3.1"
+description = "Graphical application and simple terminal menu for managing zapret on Linux"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}
-authors = [{name = "Zapret Console contributors"}]
+authors = [{name = "Zapret Manager contributors"}]
 classifiers = ["Operating System :: POSIX :: Linux", "Environment :: Console", "Programming Language :: Python :: 3"]
 
 [project.scripts]
@@ -17,7 +17,6 @@ zapret-console = "zapret_console.app:entrypoint"
 
 [project.optional-dependencies]
 gui = ["PySide6==6.12.0"]
-tui = ["textual==8.2.8"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

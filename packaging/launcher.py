@@ -20,10 +20,10 @@ try:
             if info.st_uid != 0 or (info.st_mode & 0o022 and not sticky):
                 raise RuntimeError(f'Недоверенный путь установленного приложения: {node}')
     core_modes = {'--admin', '--request-json', '--status', '--json', '--doctor', '--diagnose', '--version', '--help', '-h', '--legacy-menu'}
-    if os.geteuid() != 0 and not core_modes.intersection(sys.argv[1:]):
+    if os.geteuid() != 0 and '--gui' in sys.argv[1:] and not core_modes.intersection(sys.argv[1:]):
         python = release / 'venv' / 'bin' / 'python'
         if not python.is_file():
-            raise RuntimeError('UI-зависимости не установлены. Выполни sudo bash scripts/install.sh --ui all (или --ui tui). Прежнее меню: --legacy-menu')
+            raise RuntimeError('Графические зависимости не установлены. Выполни sudo bash scripts/install.sh --ui all. Терминальное меню: zapret-console')
         os.execv(str(python), [str(python), '-I', str(release / 'bootstrap.py'), *sys.argv[1:]])
     sys.path.insert(0, str(release / 'app'))
     from zapret_console.app import entrypoint

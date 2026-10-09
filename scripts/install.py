@@ -93,7 +93,7 @@ def requirements(source, ui):
         if '=' in line:
             key, value = line.split('=', 1)
             extras[key.strip()] = ast.literal_eval(value.strip())
-    result = list(extras['tui']) if ui != 'none' else []
+    result = []
     if ui == 'all':
         result.extend(extras['gui'])
     if not all(isinstance(item, str) and re.fullmatch(r'[A-Za-z0-9_.-]+==[0-9.]+', item) for item in result):
@@ -131,8 +131,6 @@ def install(source, stage='', ui='all', with_deps=None, backend_root=None, unit=
                 raise RuntimeError(f'Не найдена зависимость: {tool}. Запусти scripts/setup.sh')
         if ui == 'all' and not shutil.which('pkexec'):
             raise RuntimeError('Не найден pkexec. Запусти scripts/setup.sh')
-        if not (Path(root) / 'conf.env').is_file() or not os.access(Path(root) / 'nfqws', os.X_OK):
-            raise RuntimeError(f'Сначала настрой адаптер: {root}')
     deps = requirements(source, ui)
     with_deps = not bool(stage) if with_deps is None else with_deps
     desktop = prefix / 'share/applications'
@@ -172,7 +170,7 @@ def install(source, stage='', ui='all', with_deps=None, backend_root=None, unit=
                 runner(['/usr/bin/python3', '-I', '-m', 'venv', str(release / 'venv')])
                 python = str(release / 'venv/bin/python')
                 runner([python, '-I', '-m', 'pip', '--isolated', 'install', '--disable-pip-version-check', *deps])
-                imports = 'import textual' + ('; import PySide6; from PySide6.QtQml import QQmlApplicationEngine' if ui == 'all' else '')
+                imports = 'import PySide6; from PySide6.QtQml import QQmlApplicationEngine'
                 runner([python, '-I', '-c', imports])
             runner(['/usr/bin/python3', '-I', str(release / 'bootstrap.py'), '--help'])
             atomic(release / 'installation.json', json.dumps({'ui': ui, 'dependencies_installed': bool(with_deps and deps)}, indent=2).encode())
@@ -244,7 +242,7 @@ def uninstall(stage=''):
 
 def main():
     os.umask(0o022)
-    parser = argparse.ArgumentParser(description='Установить GUI/TUI без изменения адаптера')
+    parser = argparse.ArgumentParser(description='Установить окно и простое терминальное меню без изменения адаптера')
     parser.add_argument('--backend-root')
     parser.add_argument('--service')
     parser.add_argument('--ui', choices=('all', 'tui', 'none'), default='all')

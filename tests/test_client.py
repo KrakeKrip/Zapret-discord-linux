@@ -356,7 +356,7 @@ class ClientTransportTests(unittest.TestCase):
         r = subprocess.run([sys.executable, '-m', 'zapret_console', '--help'],
                            env=env, capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 0)
-        self.assertIn('Zapret Console', r.stdout)
+        self.assertIn('Zapret Manager', r.stdout)
 
     def test_client_snapshot_passes_through_core(self):
         ctx = core.BackendContext(root=self.root, state=self.root / 'state', unit='x.service')

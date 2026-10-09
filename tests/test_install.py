@@ -46,14 +46,14 @@ class InstallTests(unittest.TestCase):
     def test_staged_install_has_all_frontends_resources_and_launchers(self):
         release = self.install()
         self.assertEqual((self.base / 'current').resolve(), release)
-        for relative in ('app/zapret_console/tui/ui.py', 'app/zapret_console/gui/qml/Main.qml', 'app/zapret_console/client.py'):
+        for relative in ('app/zapret_console/app.py', 'app/zapret_console/gui/qml/Main.qml', 'app/zapret_console/client.py'):
             self.assertTrue((release / relative).is_file())
         self.assertFalse((release / 'venv').exists())  # No network by default.
         self.assertTrue(os.access(self.launcher, os.X_OK))
         self.assertEqual(self.launcher.stat().st_mode & 0o777, 0o755)
         result = subprocess.run([str(self.launcher), '--version'], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('0.3.0', result.stdout)
+        self.assertIn('0.3.1', result.stdout)
         for name in ('zapret-console.desktop', 'zapret-console-tui.desktop'):
             path = self.prefix / 'share/applications' / name
             self.assertTrue(path.is_file())
@@ -173,8 +173,8 @@ class InstallTests(unittest.TestCase):
         self.assertFalse(self.launcher.exists())
 
     def test_dependencies_use_exact_project_pins(self):
-        self.assertEqual(installer.requirements(ROOT, 'all'), ['textual==8.2.8', 'PySide6==6.12.0'])
-        self.assertEqual(installer.requirements(ROOT, 'tui'), ['textual==8.2.8'])
+        self.assertEqual(installer.requirements(ROOT, 'all'), ['PySide6==6.12.0'])
+        self.assertEqual(installer.requirements(ROOT, 'tui'), [])
         self.assertEqual(installer.requirements(ROOT, 'none'), [])
 
     def test_legacy_tree_is_adopted_and_failure_preserves_legacy_launcher(self):
@@ -216,6 +216,17 @@ class InstallTests(unittest.TestCase):
         self.assertFalse((self.prefix / 'share/applications/zapret-console.desktop').exists())
         self.assertFalse((self.prefix / 'share/applications/zapret-console-tui.desktop').exists())
 
+
+    def test_terminal_launcher_needs_no_venv_even_when_explicitly_selected(self):
+        self.install(ui='tui')
+        for args in ([], ['--tui'], ['--legacy-menu']):
+            result = subprocess.run([str(self.launcher), *args], stdin=subprocess.DEVNULL, capture_output=True, text=True)
+            self.assertNotIn('зависимости не установлены', result.stderr)
+            self.assertNotIn('textual', result.stderr.lower())
+            self.assertIn('Запусти zapret-console в терминале', result.stderr)
+        gui = subprocess.run([str(self.launcher), '--gui'], capture_output=True, text=True)
+        self.assertNotEqual(gui.returncode, 0)
+        self.assertIn('Графические зависимости не установлены', gui.stderr)
 
     def test_root_launcher_refuses_writable_imported_module_before_import(self):
         release = self.install()

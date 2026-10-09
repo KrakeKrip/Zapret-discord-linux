@@ -1,11 +1,11 @@
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=Zapret Console (Terminal)
-Name[ru]=Zapret — терминал
+Name=Zapret Manager — Menu
+Name[ru]=Zapret Manager — меню
 Comment=Manage zapret in a terminal
 Comment[ru]=Управление zapret в терминале
-Exec=/usr/local/bin/zapret-console --tui
+Exec=/usr/local/bin/zapret-console
 TryExec=/usr/local/bin/zapret-console
 Icon=zapret-console
 Terminal=true

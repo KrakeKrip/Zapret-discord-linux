@@ -9,7 +9,7 @@ ApplicationWindow {
     minimumWidth: 800
     minimumHeight: 560
     visible: true
-    title: qsTr("Zapret Console")
+    title: qsTr("Zapret Manager")
     color: Theme.background
 
     // design/gui-v1/SPEC.md: узкое окно
@@ -135,7 +135,7 @@ ApplicationWindow {
                         font.bold: true
                     }
                     Label {
-                        text: qsTr("Console")
+                        text: qsTr("Manager")
                         color: Theme.muted
                         font.pixelSize: 11
                     }

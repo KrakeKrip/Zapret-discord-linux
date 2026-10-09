@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=Zapret Console
-Name[ru]=Zapret — управление
+Name=Zapret Manager
+Name[ru]=Zapret Manager
 Comment=Manage zapret, connection profiles and Discord diagnostics
 Comment[ru]=Управление zapret, профилями и диагностикой Discord
 Exec=/usr/local/bin/zapret-console --gui
